@@ -1,4 +1,5 @@
 import cadquery as cq
+from abc import ABC, abstractmethod
 
 class FrontModule:
     """A module that can be added to the front panel of a rack unit"""
@@ -80,8 +81,120 @@ class HardDriveBay(FrontModule):
         return self
 
 
-class RackUnit:
-    def __init__(self, depth, width, height_units=1, wall_thickness=0.25, floor_thickness=0.125):
+class ExplodableObject(ABC):
+    """An abstract base class for objects that can be exploded for visualization"""
+    
+    def __init__(self, explode=False, explosion_distance=5):
+        """
+        Initialize an explodable object
+        
+        Args:
+            explode: Whether to explode the object immediately
+            explosion_distance: Distance to explode components
+        """
+        self.exploded = explode
+        self.explosion_distance = explosion_distance
+        self.components = {}  # Dictionary to store components
+    
+    @abstractmethod
+    def _create_components(self):
+        """Create the components of the object (to be implemented by subclasses)"""
+        pass
+    
+    @abstractmethod
+    def get_practical_dimensions(self, explosion_distance=None):
+        """
+        Calculate practical dimensions including explosion distances
+        
+        Args:
+            explosion_distance: Optional override for explosion distance
+            
+        Returns:
+            (practical_x, practical_y, practical_z) tuple
+        """
+        pass
+    
+    def add_component(self, name, component):
+        """
+        Add a component to the object
+        
+        Args:
+            name: Name of the component
+            component: Component object
+            
+        Returns:
+            The added component
+        """
+        self.components[name] = component
+        return component
+    
+    def get_component(self, name):
+        """
+        Get a component by name
+        
+        Args:
+            name: Name of the component
+            
+        Returns:
+            The component object or None if not found
+        """
+        return self.components.get(name)
+    
+    def explode(self, distance=None):
+        """
+        Explode the components outward by the specified distance
+        
+        Args:
+            distance: Distance to explode components, defaults to self.explosion_distance
+            
+        Returns:
+            Self for method chaining
+        """
+        if distance is None:
+            distance = self.explosion_distance
+        
+        self.exploded = True
+        # Implementation to be provided by subclasses through overriding
+        return self
+    
+    def unexplode(self):
+        """
+        Restore components to their original positions
+        
+        Returns:
+            Self for method chaining
+        """
+        if self.exploded:
+            # Implementation to be provided by subclasses
+            self.exploded = False
+        return self
+    
+    def translate(self, vector):
+        """
+        Translate all components by the specified vector
+        
+        Args:
+            vector: (x, y, z) translation vector
+            
+        Returns:
+            Self for method chaining
+        """
+        # Implementation to be provided by subclasses
+        return self
+    
+    def show(self, name_suffix=""):
+        """
+        Show all components in the viewer
+        
+        Args:
+            name_suffix: Suffix to add to component names for identification
+        """
+        # Implementation to be provided by subclasses
+        pass
+
+
+class RackUnit(ExplodableObject):
+    def __init__(self, depth, width, height_units=1, wall_thickness=0.25, floor_thickness=0.125, explode=False, explosion_distance=5):
         """
         Create a server rack unit with specified dimensions
         
@@ -91,7 +204,11 @@ class RackUnit:
             height_units: Height of the rack unit in U units (1U = 1.75")
             wall_thickness: Thickness of the walls
             floor_thickness: Thickness of the floor
+            explode: Whether to explode the object immediately
+            explosion_distance: Distance to explode components
         """
+        super().__init__(explode, explosion_distance)
+        
         self.depth = depth
         self.width = width
         self.height_units = height_units
@@ -124,6 +241,10 @@ class RackUnit:
         
         # Create the components
         self._create_components()
+        
+        # Explode if requested
+        if explode:
+            self.explode(explosion_distance)
     
     def _create_components(self):
         """Create the basic components (floor and walls)"""
@@ -148,6 +269,13 @@ class RackUnit:
         self.right_wall = (cq.Workplane("XY")
                           .box(self.inner_depth, self.wall_thickness, self.height)
                           .translate((self.depth/2, self.width/2 - self.wall_thickness/2, self.height/2)))
+        
+        # Add components to the parent's component dictionary
+        self.add_component('floor', self.floor)
+        self.add_component('front_wall', self.front_wall)
+        self.add_component('back_wall', self.back_wall)
+        self.add_component('left_wall', self.left_wall)
+        self.add_component('right_wall', self.right_wall)
     
     def is_grid_position_available(self, segment_x, segment_y, width_segments, height_segments):
         """
@@ -243,13 +371,18 @@ class RackUnit:
                         bay = HardDriveBay(name=f"hdd_bay_{x}_{y}")
                         self.add_front_module(bay, x, y)
     
-    def explode(self, distance):
+    def explode(self, distance=None):
         """
         Explode the components outward by the specified distance
         
         Args:
             distance: Distance to explode components
         """
+        if distance is None:
+            distance = self.explosion_distance
+        
+        super().explode(distance)
+        
         # Front wall explodes in negative X direction
         self.front_wall = self.front_wall.translate((-distance, 0, 0))
         
@@ -267,6 +400,46 @@ class RackUnit:
         for module in self.front_modules:
             module.translate((-distance * 1.5, 0, 0))
         
+        # Update components in the parent's component dictionary
+        self.components['front_wall'] = self.front_wall
+        self.components['back_wall'] = self.back_wall
+        self.components['left_wall'] = self.left_wall
+        self.components['right_wall'] = self.right_wall
+        
+        return self
+    
+    def unexplode(self):
+        """
+        Restore components to their original positions
+        """
+        if not self.exploded:
+            return self
+            
+        distance = self.explosion_distance
+        
+        # Front wall moves back in positive X direction
+        self.front_wall = self.front_wall.translate((distance, 0, 0))
+        
+        # Back wall moves back in negative X direction
+        self.back_wall = self.back_wall.translate((-distance, 0, 0))
+        
+        # Left wall moves back in positive Y direction
+        self.left_wall = self.left_wall.translate((0, distance, 0))
+        
+        # Right wall moves back in negative Y direction
+        self.right_wall = self.right_wall.translate((0, -distance, 0))
+        
+        # Move front modules back
+        for module in self.front_modules:
+            module.translate((distance * 1.5, 0, 0))
+        
+        # Update components in the parent's component dictionary
+        self.components['front_wall'] = self.front_wall
+        self.components['back_wall'] = self.back_wall
+        self.components['left_wall'] = self.left_wall
+        self.components['right_wall'] = self.right_wall
+        
+        super().unexplode()
         return self
     
     def translate(self, vector):
@@ -285,6 +458,13 @@ class RackUnit:
         # Translate front modules
         for module in self.front_modules:
             module.translate(vector)
+        
+        # Update components in the parent's component dictionary
+        self.components['floor'] = self.floor
+        self.components['front_wall'] = self.front_wall
+        self.components['back_wall'] = self.back_wall
+        self.components['left_wall'] = self.left_wall
+        self.components['right_wall'] = self.right_wall
         
         return self
     
@@ -338,7 +518,7 @@ class RackUnitExplodedView:
         self.rack_units = []
     
     def add_rack_unit(self, depth, width, height_units=1, wall_thickness=0.25, floor_thickness=0.125,
-                     modules_config=None):
+                     modules_config=None, explode=False):
         """
         Add a rack unit to the view
         
@@ -349,11 +529,13 @@ class RackUnitExplodedView:
             wall_thickness: Thickness of the walls
             floor_thickness: Thickness of the floor
             modules_config: Configuration for front modules
+            explode: Whether to create the unit in exploded state
             
         Returns:
             The created RackUnit object
         """
-        rack_unit = RackUnit(depth, width, height_units, wall_thickness, floor_thickness)
+        rack_unit = RackUnit(depth, width, height_units, wall_thickness, floor_thickness, 
+                            explode=explode, explosion_distance=self.explosion_distance)
         
         # Add front modules based on configuration
         if modules_config == "hdd_bays" or modules_config == "full":
@@ -365,9 +547,10 @@ class RackUnitExplodedView:
     
     def arrange(self):
         """Arrange the rack units with front alignment and proper spacing"""
-        # Explode all rack units
+        # Explode all rack units that aren't already exploded
         for rack_unit in self.rack_units:
-            rack_unit.explode(self.explosion_distance)
+            if not rack_unit.exploded:
+                rack_unit.explode(self.explosion_distance)
         
         # Calculate y positions
         y_positions = []
@@ -411,16 +594,16 @@ if __name__ == "__main__" or True:  # True to ensure this runs in any environmen
     
     # Add rack units with different heights but all with full drive bay populations
     # 1U
-    view.add_rack_unit(rack_unit_depths[0], rack_chassis_width, 1, modules_config="full")
+    view.add_rack_unit(rack_unit_depths[0], rack_chassis_width, 1, modules_config="full", explode=True)
     
     # 2U 
-    view.add_rack_unit(rack_unit_depths[1], rack_chassis_width, 2, modules_config="full")
+    view.add_rack_unit(rack_unit_depths[1], rack_chassis_width, 2, modules_config="full", explode=True)
     
     # 3U (new)
-    view.add_rack_unit(rack_unit_depths[2], rack_chassis_width, 3, modules_config="full")
+    view.add_rack_unit(rack_unit_depths[2], rack_chassis_width, 3, modules_config="full", explode=True)
     
     # 4U
-    view.add_rack_unit(rack_unit_depths[3], rack_chassis_width, 4, modules_config="full")
+    view.add_rack_unit(rack_unit_depths[3], rack_chassis_width, 4, modules_config="full", explode=True)
     
     # Arrange and show
     view.arrange()
