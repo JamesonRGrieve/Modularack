@@ -193,6 +193,139 @@ class ExplodableObject(ABC):
         pass
 
 
+class WallSegment(ExplodableObject):
+    """A segment of a rack unit wall with configurable height (1U or 2U)"""
+    
+    POSITIONS = ["front", "back", "left", "right"]
+    
+    def __init__(self, wall_type, width, depth, height_units=1, thickness=0.25, name=None, explode=False, explosion_distance=5):
+        """
+        Create a wall segment
+        
+        Args:
+            wall_type: Type of wall ("front", "back", "left", "right")
+            width: Width of the wall
+            depth: Depth of the rack unit (used for side walls)
+            height_units: Height in U units (1 or 2 only)
+            thickness: Thickness of the wall
+            name: Name of the segment
+            explode: Whether to explode the object immediately
+            explosion_distance: Distance to explode components
+        """
+        if height_units not in [1, 2]:
+            raise ValueError("Wall segment height_units must be 1 or 2")
+            
+        if wall_type not in self.POSITIONS:
+            raise ValueError(f"Wall type must be one of {self.POSITIONS}")
+        
+        super().__init__(explode, explosion_distance)
+        
+        self.wall_type = wall_type
+        self.width = width
+        self.depth = depth
+        self.height_units = height_units
+        self.height = height_units * 1.75  # 1U = 1.75 inches
+        self.thickness = thickness
+        self.name = name or f"{wall_type}_wall_{height_units}U"
+        
+        # The actual 3D object
+        self.wall_obj = None
+        
+        # Create the component
+        self._create_components()
+        
+        # Explode if requested
+        if explode:
+            self.explode(explosion_distance)
+    
+    def _create_components(self):
+        """Create the wall segment"""
+        if self.wall_type in ["front", "back"]:
+            # Front and back walls are thin in X dimension, full width in Y
+            self.wall_obj = (cq.Workplane("XY")
+                           .box(self.thickness, self.width, self.height)
+                           .translate((0, 0, self.height/2)))  # Center at origin initially
+        else:
+            # Side walls (left/right) are thin in Y dimension, partial depth in X
+            self.wall_obj = (cq.Workplane("XY")
+                           .box(self.depth - 2 * self.thickness, self.thickness, self.height)
+                           .translate((0, 0, self.height/2)))  # Center at origin initially
+        
+        # Add to components dictionary
+        self.add_component('wall', self.wall_obj)
+        
+        return self
+    
+    def get_practical_dimensions(self, explosion_distance=None):
+        """Get practical dimensions of the wall segment"""
+        if explosion_distance is None:
+            explosion_distance = self.explosion_distance
+            
+        if self.wall_type in ["front", "back"]:
+            return (self.thickness + (explosion_distance if self.exploded else 0), 
+                    self.width, 
+                    self.height)
+        else:
+            return (self.depth - 2 * self.thickness + (explosion_distance if self.exploded else 0), 
+                    self.thickness, 
+                    self.height)
+    
+    def explode(self, distance=None):
+        """Explode the wall segment in the appropriate direction"""
+        if distance is None:
+            distance = self.explosion_distance
+            
+        super().explode(distance)
+        
+        # Direction depends on wall type
+        if self.wall_type == "front":
+            self.wall_obj = self.wall_obj.translate((-distance, 0, 0))
+        elif self.wall_type == "back":
+            self.wall_obj = self.wall_obj.translate((distance, 0, 0))
+        elif self.wall_type == "left":
+            self.wall_obj = self.wall_obj.translate((0, -distance, 0))
+        elif self.wall_type == "right":
+            self.wall_obj = self.wall_obj.translate((0, distance, 0))
+            
+        # Update component
+        self.components['wall'] = self.wall_obj
+        
+        return self
+    
+    def unexplode(self):
+        """Return wall segment to its original position"""
+        if not self.exploded:
+            return self
+            
+        distance = self.explosion_distance
+        
+        # Direction depends on wall type
+        if self.wall_type == "front":
+            self.wall_obj = self.wall_obj.translate((distance, 0, 0))
+        elif self.wall_type == "back":
+            self.wall_obj = self.wall_obj.translate((-distance, 0, 0))
+        elif self.wall_type == "left":
+            self.wall_obj = self.wall_obj.translate((0, distance, 0))
+        elif self.wall_type == "right":
+            self.wall_obj = self.wall_obj.translate((0, -distance, 0))
+            
+        # Update component
+        self.components['wall'] = self.wall_obj
+        
+        super().unexplode()
+        return self
+    
+    def translate(self, vector):
+        """Translate the wall segment"""
+        self.wall_obj = self.wall_obj.translate(vector)
+        self.components['wall'] = self.wall_obj
+        return self
+    
+    def show(self, name_suffix=""):
+        """Show the wall segment in the viewer"""
+        show_object(self.wall_obj, name=f"{self.name}_{name_suffix}")
+
+
 class RackUnit(ExplodableObject):
     def __init__(self, depth, width, height_units=1, wall_thickness=0.25, floor_thickness=0.125, explode=False, explosion_distance=5):
         """
@@ -231,10 +364,14 @@ class RackUnit(ExplodableObject):
         
         # Components
         self.floor = None
-        self.front_wall = None
-        self.back_wall = None
-        self.left_wall = None
-        self.right_wall = None
+        
+        # Wall segments
+        self.wall_segments = {
+            'front': [],
+            'back': [],
+            'left': [],
+            'right': []
+        }
         
         # Front modules
         self.front_modules = []
@@ -253,29 +390,75 @@ class RackUnit(ExplodableObject):
                      .box(self.depth, self.width, self.floor_thickness)
                      .translate((self.depth/2, 0, self.floor_thickness/2)))
         
-        # Walls centered at origin initially
-        self.front_wall = (cq.Workplane("XY")
-                          .box(self.wall_thickness, self.width, self.height)
-                          .translate((self.wall_thickness/2, 0, self.height/2)))
-        
-        self.back_wall = (cq.Workplane("XY")
-                         .box(self.wall_thickness, self.width, self.height)
-                         .translate((self.depth - self.wall_thickness/2, 0, self.height/2)))
-        
-        self.left_wall = (cq.Workplane("XY")
-                         .box(self.inner_depth, self.wall_thickness, self.height)
-                         .translate((self.depth/2, -self.width/2 + self.wall_thickness/2, self.height/2)))
-        
-        self.right_wall = (cq.Workplane("XY")
-                          .box(self.inner_depth, self.wall_thickness, self.height)
-                          .translate((self.depth/2, self.width/2 - self.wall_thickness/2, self.height/2)))
-        
-        # Add components to the parent's component dictionary
+        # Add floor to components
         self.add_component('floor', self.floor)
-        self.add_component('front_wall', self.front_wall)
-        self.add_component('back_wall', self.back_wall)
-        self.add_component('left_wall', self.left_wall)
-        self.add_component('right_wall', self.right_wall)
+        
+        # Create wall segments based on height
+        # For 1U, use a single 1U segment for each wall
+        # For 2U, use a single 2U segment for each wall
+        # For 3U, use one 2U + one 1U segment for each wall
+        # For 4U, use two 2U segments for each wall
+        
+        segments_config = []
+        if self.height_units == 1:
+            segments_config = [1]
+        elif self.height_units == 2:
+            segments_config = [2]
+        elif self.height_units == 3:
+            segments_config = [2, 1]
+        elif self.height_units == 4:
+            segments_config = [2, 2]
+        else:
+            # For any other height, use 2U segments as much as possible, then add a 1U if needed
+            segments_config = [2] * (self.height_units // 2)
+            if self.height_units % 2 == 1:
+                segments_config.append(1)
+        
+        # Create all wall segments
+        for wall_type in ["front", "back", "left", "right"]:
+            current_height = 0
+            segments = []
+            
+            for i, seg_height in enumerate(segments_config):
+                # Create the wall segment
+                segment = WallSegment(
+                    wall_type=wall_type,
+                    width=self.width,
+                    depth=self.depth,
+                    height_units=seg_height,
+                    thickness=self.wall_thickness,
+                    name=f"{wall_type}_wall_{seg_height}U_{i}",
+                    explode=False,
+                    explosion_distance=self.explosion_distance
+                )
+                
+                # Store vertical position information for explosion
+                segment.vertical_position = current_height
+                segment.vertical_index = i
+                segment.total_segments = len(segments_config)
+                
+                # Position the segment
+                if wall_type == "front":
+                    # Front wall at x=0
+                    segment.translate((self.wall_thickness/2, 0, current_height + segment.height/2))
+                elif wall_type == "back":
+                    # Back wall at x=depth
+                    segment.translate((self.depth - self.wall_thickness/2, 0, current_height + segment.height/2))
+                elif wall_type == "left":
+                    # Left wall along -y
+                    segment.translate((self.depth/2, -self.width/2 + self.wall_thickness/2, current_height + segment.height/2))
+                elif wall_type == "right":
+                    # Right wall along +y
+                    segment.translate((self.depth/2, self.width/2 - self.wall_thickness/2, current_height + segment.height/2))
+                
+                segments.append(segment)
+                current_height += segment.height
+                
+                # Add to components dictionary with unique name
+                self.add_component(f"{wall_type}_wall_{i}", segment.wall_obj)
+            
+            # Store segments
+            self.wall_segments[wall_type] = segments
     
     def is_grid_position_available(self, segment_x, segment_y, width_segments, height_segments):
         """
@@ -383,28 +566,29 @@ class RackUnit(ExplodableObject):
         
         super().explode(distance)
         
-        # Front wall explodes in negative X direction
-        self.front_wall = self.front_wall.translate((-distance, 0, 0))
-        
-        # Back wall explodes in positive X direction
-        self.back_wall = self.back_wall.translate((distance, 0, 0))
-        
-        # Left wall explodes in negative Y direction
-        self.left_wall = self.left_wall.translate((0, -distance, 0))
-        
-        # Right wall explodes in positive Y direction
-        self.right_wall = self.right_wall.translate((0, distance, 0))
+        # Explode all wall segments
+        for wall_type, segments in self.wall_segments.items():
+            # Calculate vertical explosion distance
+            vertical_explosion = distance * 0.75
+            
+            for i, segment in enumerate(segments):
+                # Horizontal explosion (standard)
+                segment.explode(distance)
+                
+                # Additional vertical explosion based on position
+                if len(segments) > 1:
+                    # For segments above the bottom, move them up
+                    if i > 0:
+                        vertical_shift = i * vertical_explosion
+                        segment.translate((0, 0, vertical_shift))
+                
+                # Update component reference
+                self.components[f"{wall_type}_wall_{i}"] = segment.wall_obj
         
         # Explode front modules forward (in negative X direction)
         # Position them in front of the exploded front wall
         for module in self.front_modules:
             module.translate((-distance * 1.5, 0, 0))
-        
-        # Update components in the parent's component dictionary
-        self.components['front_wall'] = self.front_wall
-        self.components['back_wall'] = self.back_wall
-        self.components['left_wall'] = self.left_wall
-        self.components['right_wall'] = self.right_wall
         
         return self
     
@@ -414,30 +598,27 @@ class RackUnit(ExplodableObject):
         """
         if not self.exploded:
             return self
-            
+        
         distance = self.explosion_distance
+        vertical_explosion = distance * 0.75
         
-        # Front wall moves back in positive X direction
-        self.front_wall = self.front_wall.translate((distance, 0, 0))
-        
-        # Back wall moves back in negative X direction
-        self.back_wall = self.back_wall.translate((-distance, 0, 0))
-        
-        # Left wall moves back in positive Y direction
-        self.left_wall = self.left_wall.translate((0, distance, 0))
-        
-        # Right wall moves back in negative Y direction
-        self.right_wall = self.right_wall.translate((0, -distance, 0))
+        # Unexplode all wall segments
+        for wall_type, segments in self.wall_segments.items():
+            for i, segment in enumerate(segments):
+                # First undo the vertical explosion for segments above the bottom
+                if len(segments) > 1 and i > 0:
+                    vertical_shift = i * vertical_explosion
+                    segment.translate((0, 0, -vertical_shift))
+                
+                # Then standard unexplode
+                segment.unexplode()
+                
+                # Update component reference
+                self.components[f"{wall_type}_wall_{i}"] = segment.wall_obj
         
         # Move front modules back
         for module in self.front_modules:
             module.translate((distance * 1.5, 0, 0))
-        
-        # Update components in the parent's component dictionary
-        self.components['front_wall'] = self.front_wall
-        self.components['back_wall'] = self.back_wall
-        self.components['left_wall'] = self.left_wall
-        self.components['right_wall'] = self.right_wall
         
         super().unexplode()
         return self
@@ -449,26 +630,24 @@ class RackUnit(ExplodableObject):
         Args:
             vector: (x, y, z) translation vector
         """
+        # Translate floor
         self.floor = self.floor.translate(vector)
-        self.front_wall = self.front_wall.translate(vector)
-        self.back_wall = self.back_wall.translate(vector)
-        self.left_wall = self.left_wall.translate(vector)
-        self.right_wall = self.right_wall.translate(vector)
+        self.components['floor'] = self.floor
+        
+        # Translate all wall segments
+        for wall_type, segments in self.wall_segments.items():
+            for i, segment in enumerate(segments):
+                segment.translate(vector)
+                # Update component reference
+                self.components[f"{wall_type}_wall_{i}"] = segment.wall_obj
         
         # Translate front modules
         for module in self.front_modules:
             module.translate(vector)
         
-        # Update components in the parent's component dictionary
-        self.components['floor'] = self.floor
-        self.components['front_wall'] = self.front_wall
-        self.components['back_wall'] = self.back_wall
-        self.components['left_wall'] = self.left_wall
-        self.components['right_wall'] = self.right_wall
-        
         return self
     
-    def get_practical_dimensions(self, explosion_distance):
+    def get_practical_dimensions(self, explosion_distance=None):
         """
         Calculate practical dimensions including explosion distances
         
@@ -478,10 +657,17 @@ class RackUnit(ExplodableObject):
         Returns:
             (practical_x, practical_y, practical_z) tuple
         """
+        if explosion_distance is None:
+            explosion_distance = self.explosion_distance
+            
         # Add extra distance for front modules
         module_depth = max([m.depth for m in self.front_modules]) if self.front_modules else 0
-        practical_x = self.depth + 2 * explosion_distance + module_depth
-        practical_y = self.width + 2 * explosion_distance
+        
+        # If exploded, account for the explosion distance
+        explosion_factor = 2 if self.exploded else 0
+        
+        practical_x = self.depth + explosion_factor * explosion_distance + module_depth
+        practical_y = self.width + explosion_factor * explosion_distance
         practical_z = self.height
         
         return (practical_x, practical_y, practical_z)
@@ -494,10 +680,11 @@ class RackUnit(ExplodableObject):
             name_suffix: Suffix to add to component names for identification
         """
         show_object(self.floor, name=f"floor_{name_suffix}")
-        show_object(self.front_wall, name=f"front_{name_suffix}")
-        show_object(self.back_wall, name=f"back_{name_suffix}")
-        show_object(self.left_wall, name=f"left_{name_suffix}")
-        show_object(self.right_wall, name=f"right_{name_suffix}")
+        
+        # Show all wall segments
+        for wall_type, segments in self.wall_segments.items():
+            for i, segment in enumerate(segments):
+                segment.show(f"{name_suffix}_{i}")
         
         # Show front modules
         for i, module in enumerate(self.front_modules):
