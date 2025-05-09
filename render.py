@@ -83,8 +83,6 @@ class HardDriveBay(FrontModule):
         return self
 
 
-
-
 class WallSegment(ExplodableObject):
     """A segment of a rack unit wall with configurable height (1U or 2U)"""
     
