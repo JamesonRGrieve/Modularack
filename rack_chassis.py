@@ -1,6 +1,7 @@
 import cadquery as cq
 
 from abstract_component import AbstractComponent
+from floor_segment import FloorSegment
 from front_panel_3_5_inch import FrontPanel3_5Inch
 from wall_segment import WallSegment
 
@@ -15,6 +16,7 @@ class RackChassis(AbstractComponent):
         floor_thickness=0.125,
         explode=False,
         explosion_distance=5,
+        motherboard_support="mini-itx",
     ):
         """
         Create a server rack unit with specified dimensions
@@ -27,6 +29,7 @@ class RackChassis(AbstractComponent):
             floor_thickness: Thickness of the floor
             explode: Whether to explode the object immediately
             explosion_distance: Distance to explode components
+            motherboard_support: Largest motherboard form factor to support
         """
         super().__init__(explode, explosion_distance)
 
@@ -36,6 +39,7 @@ class RackChassis(AbstractComponent):
         self.height = height_units * 1.75  # Convert U units to inches
         self.wall_thickness = wall_thickness
         self.floor_thickness = floor_thickness
+        self.motherboard_support = motherboard_support
         self.name = f"rack_chassis_{height_units}U"
 
         self.inner_depth = self.depth - 2 * self.wall_thickness
@@ -62,22 +66,14 @@ class RackChassis(AbstractComponent):
 
     def _create_components(self):
         """Create the basic components (floor and walls)"""
-        # Floor centered at origin initially
-        floor = (
-            cq.Workplane("XY")
-            .box(self.depth, self.width, self.floor_thickness)
-            .translate((self.depth / 2, 0, self.floor_thickness / 2))
-        )
-
-        # Add floor to components - mark it as always visible
-        self.add_component("floor", floor, always_visible=True)
+        # Create floor based on motherboard support
+        self._create_floor()
 
         # Create wall segments based on height
-        # For 1U, use a single 1U segment for each wall
-        # For 2U, use a single 2U segment for each wall
-        # For 3U, use one 2U + one 1U segment for each wall
-        # For 4U, use two 2U segments for each wall
+        self._create_walls()
 
+    def _create_walls(self):
+        """Create wall segments based on the chassis height"""
         segments_config = []
         if self.height_units == 1:
             segments_config = [1]
@@ -154,10 +150,72 @@ class RackChassis(AbstractComponent):
                     )
 
                 # Add as a child component with unique name
-                # Note: We do not need to separately add the wall object to components
-                # as add_child_component will already handle this
                 self.add_child_component(f"{wall_type}_wall_{i}", segment)
                 current_height += segment.height
+
+    def _create_floor(self):
+        """Create a single floor with the appropriate motherboard standoff pattern"""
+        # Create a basic floor plate directly without using FloorSegment
+        floor_obj = (
+            cq.Workplane("XY")
+            .box(self.depth, self.width, self.floor_thickness)
+            .translate((self.depth / 2, 0, self.floor_thickness / 2))
+        )
+
+        # Add the floor as a direct component - no child components needed
+        self.add_component("floor", floor_obj, always_visible=True)
+
+        # Create separate standoff pattern component based on motherboard form factor
+        standoff_pattern = FloorSegment(
+            form_factor=self.motherboard_support,
+            width=self.width,
+            depth=self.depth,
+            thickness=self.floor_thickness,
+            name=f"standoff_pattern_{self.motherboard_support}",
+            position="center",
+            explode=False,
+            explosion_distance=self.explosion_distance,
+        )
+
+        # Get the main object from the standoff pattern
+        pattern_obj = standoff_pattern.get_main_object()
+
+        # We don't need to add this as a component, just use it to cut holes in the floor
+        # Get the standoff positions and cut them into our floor
+        floor_with_holes = self._add_standoff_holes(floor_obj, self.motherboard_support)
+
+        # Replace the floor component with the version with holes
+        self.add_component("floor", floor_with_holes, always_visible=True)
+
+    def _add_standoff_holes(self, floor_obj, form_factor):
+        """Add standoff holes to the floor based on the selected motherboard form factor"""
+        # Create a temporary FloorSegment to access its methods
+        temp_segment = FloorSegment(
+            form_factor=form_factor,
+            width=self.width,
+            depth=self.depth,
+            thickness=self.floor_thickness,
+            position="center",
+            explode=False,
+        )
+
+        # Use the standoff adding methods to add holes to our floor
+        if form_factor == "mini-itx":
+            floor_obj = temp_segment._add_mini_itx_standoffs(floor_obj)
+        elif form_factor == "micro-atx":
+            floor_obj = temp_segment._add_mini_itx_standoffs(floor_obj)
+            floor_obj = temp_segment._add_micro_atx_standoffs(floor_obj)
+        elif form_factor == "atx":
+            floor_obj = temp_segment._add_mini_itx_standoffs(floor_obj)
+            floor_obj = temp_segment._add_micro_atx_standoffs(floor_obj)
+            floor_obj = temp_segment._add_atx_standoffs(floor_obj)
+        elif form_factor == "e-atx":
+            floor_obj = temp_segment._add_mini_itx_standoffs(floor_obj)
+            floor_obj = temp_segment._add_micro_atx_standoffs(floor_obj)
+            floor_obj = temp_segment._add_atx_standoffs(floor_obj)
+            floor_obj = temp_segment._add_e_atx_standoffs(floor_obj)
+
+        return floor_obj
 
     def get_main_object(self):
         """Return the floor as the main object"""
@@ -339,13 +397,13 @@ class RackChassis(AbstractComponent):
         Args:
             vector: (x, y, z) translation vector
         """
-        # Translate floor
+        # First translate the floor component
         floor = self.get_component("floor")
         if floor:
             floor = floor.translate(vector)
-            self.add_component("floor", floor)
+            self.add_component("floor", floor, always_visible=True)
 
-        # Child components are automatically translated by parent's translate
+        # Then let parent handle child components
         super().translate(vector)
 
         return self

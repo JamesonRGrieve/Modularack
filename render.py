@@ -1,5 +1,5 @@
 from abstract_component import AbstractComponent
-from rack_unit import RackChassis
+from rack_chassis import RackChassis
 
 
 def show_component(component, name_suffix=""):
@@ -50,10 +50,10 @@ class RackUnitExplodedView:
         """
         self.explosion_distance = explosion_distance
         self.gap_between_units = gap_between_units
-        self.rack_units = []
-        self.name = "rack_unit_exploded_view"
+        self.rack_chassiss = []
+        self.name = "rack_chassis_exploded_view"
 
-    def add_rack_unit(
+    def add_rack_chassis(
         self,
         depth,
         width,
@@ -78,7 +78,7 @@ class RackUnitExplodedView:
         Returns:
             The created RackUnit object
         """
-        rack_unit = RackChassis(
+        rack_chassis = RackChassis(
             depth,
             width,
             height_units,
@@ -91,24 +91,26 @@ class RackUnitExplodedView:
         # Add front modules based on configuration
         if modules_config == "hdd_bays" or modules_config == "full":
             # Fill all spaces with hard drive bays
-            rack_unit.add_hard_drive_bays("all")
+            rack_chassis.add_hard_drive_bays("all")
 
-        self.rack_units.append(rack_unit)
-        return rack_unit
+        self.rack_chassiss.append(rack_chassis)
+        return rack_chassis
 
     def arrange(self):
         """Arrange the rack units with front alignment and proper spacing"""
         # Explode all rack units that aren't already exploded
-        for rack_unit in self.rack_units:
-            if not rack_unit.exploded:
-                rack_unit.explode(self.explosion_distance)
+        for rack_chassis in self.rack_chassiss:
+            if not rack_chassis.exploded:
+                rack_chassis.explode(self.explosion_distance)
 
         # Calculate y positions
         y_positions = []
         current_y = 0
 
-        for i, rack_unit in enumerate(self.rack_units):
-            practical_dims = rack_unit.get_practical_dimensions(self.explosion_distance)
+        for i, rack_chassis in enumerate(self.rack_chassiss):
+            practical_dims = rack_chassis.get_practical_dimensions(
+                self.explosion_distance
+            )
 
             if i == 0:
                 # First unit centered at 0
@@ -121,16 +123,17 @@ class RackUnitExplodedView:
                 current_y += practical_dims[1] / 2 + self.gap_between_units
 
         # Position rack units
-        for i, rack_unit in enumerate(self.rack_units):
+        for i, rack_chassis in enumerate(self.rack_chassiss):
             y_offset = y_positions[i]
             # No x offset needed - already front-aligned when created
-            rack_unit.translate((0, y_offset, 0))
+            rack_chassis.translate((0, y_offset, 0))
 
     def show(self):
         """Show all rack units"""
-        for rack_unit in self.rack_units:
+        for rack_chassis in self.rack_chassiss:
             show_component(
-                rack_unit, name_suffix=f"{rack_unit.depth}_{rack_unit.height_units}U"
+                rack_chassis,
+                name_suffix=f"{rack_chassis.depth}_{rack_chassis.height_units}U",
             )
 
 
@@ -140,30 +143,46 @@ if __name__ == "__main__" or True:  # True to ensure this runs in any environmen
     rack_total_width = 19
     rack_chassis_width = 17.75
     rack_ear_width = rack_total_width - rack_chassis_width
-    rack_unit_depths = [36, 42, 48, 50]
+    rack_chassis_depths = [36, 42, 48, 50]
 
     # Create exploded view
     view = RackUnitExplodedView(explosion_distance=5, gap_between_units=15)
 
     # Add rack units with different heights but all with full drive bay populations
     # 1U
-    view.add_rack_unit(
-        rack_unit_depths[0], rack_chassis_width, 1, modules_config="full", explode=True
+    view.add_rack_chassis(
+        rack_chassis_depths[0],
+        rack_chassis_width,
+        1,
+        modules_config="full",
+        explode=True,
     )
 
     # 2U
-    view.add_rack_unit(
-        rack_unit_depths[1], rack_chassis_width, 2, modules_config="full", explode=True
+    view.add_rack_chassis(
+        rack_chassis_depths[1],
+        rack_chassis_width,
+        2,
+        modules_config="full",
+        explode=True,
     )
 
     # 3U (new)
-    view.add_rack_unit(
-        rack_unit_depths[2], rack_chassis_width, 3, modules_config="full", explode=True
+    view.add_rack_chassis(
+        rack_chassis_depths[2],
+        rack_chassis_width,
+        3,
+        modules_config="full",
+        explode=True,
     )
 
     # 4U
-    view.add_rack_unit(
-        rack_unit_depths[3], rack_chassis_width, 4, modules_config="full", explode=True
+    view.add_rack_chassis(
+        rack_chassis_depths[3],
+        rack_chassis_width,
+        4,
+        modules_config="full",
+        explode=True,
     )
 
     # Arrange and show
