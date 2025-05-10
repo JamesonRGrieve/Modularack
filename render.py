@@ -1,9 +1,8 @@
 import cadquery as cq
 
 from abstract_component import ExplodableObject
-from front_module import FrontModule, HardDriveBay
+from front_panel_3_5_inch import FrontPanel3_5Inch
 from rack_unit import RackUnit
-from rack_unit_exploded_view import RackUnitExplodedView
 from wall_segment import WallSegment
 
 
@@ -38,7 +37,7 @@ def show_component(component, name_suffix=""):
         show_object(component.wall_obj, name=f"{component.name}_{name_suffix}")
 
     elif hasattr(component, "object"):
-        # It's a FrontModule with object property
+        # It's a FrontModule or AbstractFrontPanelComponent with object property
         show_object(component.object, name=f"{component.name}_{name_suffix}")
 
     elif hasattr(component, "rack_units"):
@@ -52,87 +51,6 @@ def show_component(component, name_suffix=""):
         # It's a simple object
         obj_name = component.name if hasattr(component, "name") else "object"
         show_object(component, name=f"{obj_name}_{name_suffix}")
-
-
-class FrontModule:
-    """A module that can be added to the front panel of a rack unit"""
-
-    def __init__(self, width_segments, height_segments, depth=1.0, name="module"):
-        """
-        Create a front panel module
-
-        Args:
-            width_segments: Number of horizontal segments (1-12)
-            height_segments: Number of vertical segments
-            depth: Depth of the module in inches
-            name: Name of the module
-        """
-        self.width_segments = width_segments
-        self.height_segments = height_segments
-        self.depth = depth
-        self.name = name
-        self.object = None
-        self.position = (0, 0)  # (segment_x, segment_y)
-        self.parent_rack = None
-
-    def create(self, segment_width, segment_height):
-        """
-        Create the 3D object for this module
-
-        Args:
-            segment_width: Width of each segment in inches
-            segment_height: Height of each segment in inches
-        """
-        width = self.width_segments * segment_width
-        height = self.height_segments * segment_height
-
-        self.object = (
-            cq.Workplane("YZ").box(width, height, self.depth).translate((0, 0, 0))
-        )  # Position at origin initially
-
-        return self
-
-    def translate(self, vector):
-        """Translate the module by the given vector"""
-        if self.object:
-            self.object = self.object.translate(vector)
-        return self
-
-    def show(self, name_suffix=""):
-        """Show the module in the viewer"""
-        if self.object:
-            show_object(self.object, name=f"{self.name}_{name_suffix}")
-
-
-class HardDriveBay(FrontModule):
-    """A 3.5" hard drive bay module (1 segment high, 3 segments wide)"""
-
-    def __init__(self, name="hdd_bay"):
-        super().__init__(width_segments=3, height_segments=1, depth=1.5, name=name)
-
-    def create(self, segment_width, segment_height):
-        """Override to create a more detailed hard drive bay"""
-        width = self.width_segments * segment_width
-        height = self.height_segments * segment_height
-
-        # Create basic shape
-        self.object = (
-            cq.Workplane("YZ").box(width, height, self.depth).translate((0, 0, 0))
-        )
-
-        # Add handle cutout
-        handle_width = width * 0.8
-        handle_height = height * 0.6
-        handle_depth = self.depth * 0.3
-
-        self.object = (
-            self.object.faces(">X")  # Select front face
-            .workplane()
-            .rect(handle_width, handle_height)
-            .cutBlind(-handle_depth)
-        )
-
-        return self
 
 
 class RackUnit(ExplodableObject):
@@ -402,7 +320,7 @@ class RackUnit(ExplodableObject):
                 for x in range(0, self.segments_width, 3):
                     # Check if this position is available
                     if self.is_grid_position_available(x, y, 3, 1):
-                        bay = HardDriveBay(name=f"hdd_bay_{x}_{y}")
+                        bay = FrontPanel3_5Inch(name=f"3.5inch_bay_{x}_{y}")
                         self.add_front_module(bay, x, y)
 
     def explode(self, distance=None):
@@ -436,10 +354,10 @@ class RackUnit(ExplodableObject):
                 # Update component reference
                 self.components[f"{wall_type}_wall_{i}"] = segment.wall_obj
 
-        # Explode front modules forward (in negative X direction)
-        # Position them in front of the exploded front wall
+        # Explode front modules - each module handles its own explosion
         for module in self.front_modules:
-            module.translate((-distance * 1.5, 0, 0))
+            if hasattr(module, "explode"):
+                module.explode(distance)
 
         return self
 
@@ -467,9 +385,10 @@ class RackUnit(ExplodableObject):
                 # Update component reference
                 self.components[f"{wall_type}_wall_{i}"] = segment.wall_obj
 
-        # Move front modules back
+        # Unexplode front modules - each module handles its own unexplosion
         for module in self.front_modules:
-            module.translate((distance * 1.5, 0, 0))
+            if hasattr(module, "unexplode"):
+                module.unexplode()
 
         super().unexplode()
         return self
@@ -545,6 +464,10 @@ class RackUnit(ExplodableObject):
 
 
 class RackUnitExplodedView:
+    """
+    A view that arranges multiple rack units with proper spacing
+    """
+
     def __init__(self, explosion_distance=5, gap_between_units=15):
         """
         Create an exploded view of multiple rack units
@@ -556,6 +479,7 @@ class RackUnitExplodedView:
         self.explosion_distance = explosion_distance
         self.gap_between_units = gap_between_units
         self.rack_units = []
+        self.name = "rack_unit_exploded_view"
 
     def add_rack_unit(
         self,
