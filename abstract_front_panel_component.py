@@ -1,9 +1,9 @@
 import cadquery as cq
 
-from abstract_component import ExplodableObject
+from abstract_component import AbstractComponent
 
 
-class AbstractFrontPanelComponent(ExplodableObject):
+class AbstractFrontPanelComponent(AbstractComponent):
     """
     An abstract base class for front panel components that can be added to rack units.
     This class handles common functionality including creation, explosion logic, and positioning.
@@ -35,7 +35,6 @@ class AbstractFrontPanelComponent(ExplodableObject):
         self.height_segments = height_segments
         self.depth = depth
         self.name = name
-        self.object = None
         self.position = (0, 0)  # (segment_x, segment_y)
         self.parent_rack = None
 
@@ -55,13 +54,11 @@ class AbstractFrontPanelComponent(ExplodableObject):
         # Subclasses should override this method with their own specific implementations
 
         # Note: Actual dimensions will be calculated when create() is called with segment sizes
-        self.object = None
-
-        # Add to components dictionary
-        if self.object:
-            self.add_component("panel", self.object)
-
         return self
+
+    def get_main_object(self):
+        """Override to return the panel object as the main object"""
+        return self.get_component("panel")
 
     def create(self, segment_width, segment_height):
         """
@@ -77,12 +74,12 @@ class AbstractFrontPanelComponent(ExplodableObject):
         width = self.width_segments * segment_width
         height = self.height_segments * segment_height
 
-        self.object = (
+        panel_obj = (
             cq.Workplane("YZ").box(width, height, self.depth).translate((0, 0, 0))
         )  # Position at origin initially
 
         # Update the component
-        self.add_component("panel", self.object)
+        self.add_component("panel", panel_obj)
 
         return self
 
@@ -96,9 +93,12 @@ class AbstractFrontPanelComponent(ExplodableObject):
         Returns:
             Self for method chaining
         """
-        if self.object:
-            self.object = self.object.translate(vector)
-            self.components["panel"] = self.object
+        panel_obj = self.get_component("panel")
+        if panel_obj:
+            panel_obj = panel_obj.translate(vector)
+            self.add_component("panel", panel_obj)
+
+        super().translate(vector)
         return self
 
     def explode(self, distance=None):
@@ -118,9 +118,7 @@ class AbstractFrontPanelComponent(ExplodableObject):
         super().explode(distance)
 
         # Move the front panel component forward (negative X direction)
-        if self.object:
-            self.object = self.object.translate((-distance * 1.5, 0, 0))
-            self.components["panel"] = self.object
+        self.translate((-distance * 1.5, 0, 0))
 
         return self
 
@@ -137,9 +135,7 @@ class AbstractFrontPanelComponent(ExplodableObject):
         distance = self.explosion_distance
 
         # Move the front panel component back to original position
-        if self.object:
-            self.object = self.object.translate((distance * 1.5, 0, 0))
-            self.components["panel"] = self.object
+        self.translate((distance * 1.5, 0, 0))
 
         super().unexplode()
         return self
@@ -161,9 +157,9 @@ class AbstractFrontPanelComponent(ExplodableObject):
         x_dimension = self.depth + (explosion_distance * 1.5 if self.exploded else 0)
 
         # Y and Z dimensions are not affected by explosion
-        # These will be calculated once we have the segment width and height
-        if self.object:
-            bb = self.object.BoundingBox()
+        panel_obj = self.get_component("panel")
+        if panel_obj:
+            bb = panel_obj.BoundingBox()
             return (x_dimension, bb.ylen, bb.zlen)
         else:
             # Default fallback if object hasn't been created yet

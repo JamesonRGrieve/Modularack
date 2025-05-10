@@ -44,7 +44,7 @@ class FrontPanel3_5Inch(AbstractFrontPanelComponent):
         height = self.height_segments * segment_height
 
         # Create basic shape
-        self.object = (
+        panel_obj = (
             cq.Workplane("YZ").box(width, height, self.depth).translate((0, 0, 0))
         )
 
@@ -53,14 +53,14 @@ class FrontPanel3_5Inch(AbstractFrontPanelComponent):
         handle_height = height * 0.6
         handle_depth = self.depth * 0.3
 
-        self.object = (
-            self.object.faces(">X")  # Select front face
+        panel_obj = (
+            panel_obj.faces(">X")  # Select front face
             .workplane()
             .rect(handle_width, handle_height)
             .cutBlind(-handle_depth)
         )
 
         # Update the component
-        self.add_component("panel", self.object)
+        self.add_component("panel", panel_obj)
 
         return self

@@ -1,11 +1,11 @@
 import cadquery as cq
 
-from abstract_component import ExplodableObject
-from front_module import HardDriveBay
+from abstract_component import AbstractComponent
+from front_panel_3_5_inch import FrontPanel3_5Inch
 from wall_segment import WallSegment
 
 
-class RackUnit(ExplodableObject):
+class RackChassis(AbstractComponent):
     def __init__(
         self,
         depth,
@@ -36,6 +36,7 @@ class RackUnit(ExplodableObject):
         self.height = height_units * 1.75  # Convert U units to inches
         self.wall_thickness = wall_thickness
         self.floor_thickness = floor_thickness
+        self.name = f"rack_chassis_{height_units}U"
 
         self.inner_depth = self.depth - 2 * self.wall_thickness
         self.inner_width = self.width - 2 * self.wall_thickness
@@ -52,15 +53,6 @@ class RackUnit(ExplodableObject):
             for _ in range(self.segments_height)
         ]
 
-        # Components
-        self.floor = None
-
-        # Wall segments
-        self.wall_segments = {"front": [], "back": [], "left": [], "right": []}
-
-        # Front modules
-        self.front_modules = []
-
         # Create the components
         self._create_components()
 
@@ -71,14 +63,14 @@ class RackUnit(ExplodableObject):
     def _create_components(self):
         """Create the basic components (floor and walls)"""
         # Floor centered at origin initially
-        self.floor = (
+        floor = (
             cq.Workplane("XY")
             .box(self.depth, self.width, self.floor_thickness)
             .translate((self.depth / 2, 0, self.floor_thickness / 2))
         )
 
-        # Add floor to components
-        self.add_component("floor", self.floor)
+        # Add floor to components - mark it as always visible
+        self.add_component("floor", floor, always_visible=True)
 
         # Create wall segments based on height
         # For 1U, use a single 1U segment for each wall
@@ -104,7 +96,6 @@ class RackUnit(ExplodableObject):
         # Create all wall segments
         for wall_type in ["front", "back", "left", "right"]:
             current_height = 0
-            segments = []
 
             for i, seg_height in enumerate(segments_config):
                 # Create the wall segment
@@ -162,14 +153,15 @@ class RackUnit(ExplodableObject):
                         )
                     )
 
-                segments.append(segment)
+                # Add as a child component with unique name
+                # Note: We do not need to separately add the wall object to components
+                # as add_child_component will already handle this
+                self.add_child_component(f"{wall_type}_wall_{i}", segment)
                 current_height += segment.height
 
-                # Add to components dictionary with unique name
-                self.add_component(f"{wall_type}_wall_{i}", segment.wall_obj)
-
-            # Store segments
-            self.wall_segments[wall_type] = segments
+    def get_main_object(self):
+        """Return the floor as the main object"""
+        return self.get_component("floor")
 
     def is_grid_position_available(
         self, segment_x, segment_y, width_segments, height_segments
@@ -216,7 +208,7 @@ class RackUnit(ExplodableObject):
         Add a module to the front panel at the specified grid position
 
         Args:
-            module: FrontModule instance
+            module: AbstractFrontPanelComponent instance
             segment_x: Starting X segment (0-11)
             segment_y: Starting Y segment (0 to segments_height-1)
 
@@ -254,8 +246,8 @@ class RackUnit(ExplodableObject):
         # Position module
         module.translate((pos_x, pos_y, pos_z))
 
-        # Add to modules list
-        self.front_modules.append(module)
+        # Add as a child component
+        self.add_child_component(f"front_module_{segment_x}_{segment_y}", module)
 
         return True
 
@@ -272,7 +264,7 @@ class RackUnit(ExplodableObject):
                 for x in range(0, self.segments_width, 3):
                     # Check if this position is available
                     if self.is_grid_position_available(x, y, 3, 1):
-                        bay = HardDriveBay(name=f"hdd_bay_{x}_{y}")
+                        bay = FrontPanel3_5Inch(name=f"hdd_bay_{x}_{y}")
                         self.add_front_module(bay, x, y)
 
     def explode(self, distance=None):
@@ -287,29 +279,26 @@ class RackUnit(ExplodableObject):
 
         super().explode(distance)
 
-        # Explode all wall segments
-        for wall_type, segments in self.wall_segments.items():
-            # Calculate vertical explosion distance
-            vertical_explosion = distance * 0.75
+        # Additional vertical explosion for wall segments
+        vertical_explosion = distance * 0.75
 
+        # Get all wall segments
+        for wall_type in ["front", "back", "left", "right"]:
+            # Find all wall segments of this type
+            segments = [
+                comp
+                for name, comp in self.child_components.items()
+                if name.startswith(f"{wall_type}_wall_")
+            ]
+
+            # Sort segments by their vertical index if available
+            segments.sort(key=lambda s: getattr(s, "vertical_index", 0))
+
+            # Apply additional vertical spacing for segments above the bottom
             for i, segment in enumerate(segments):
-                # Horizontal explosion (standard)
-                segment.explode(distance)
-
-                # Additional vertical explosion based on position
-                if len(segments) > 1:
-                    # For segments above the bottom, move them up
-                    if i > 0:
-                        vertical_shift = i * vertical_explosion
-                        segment.translate((0, 0, vertical_shift))
-
-                # Update component reference
-                self.components[f"{wall_type}_wall_{i}"] = segment.wall_obj
-
-        # Explode front modules forward (in negative X direction)
-        # Position them in front of the exploded front wall
-        for module in self.front_modules:
-            module.translate((-distance * 1.5, 0, 0))
+                if i > 0:  # Skip the bottom segment
+                    vertical_shift = i * vertical_explosion
+                    segment.translate((0, 0, vertical_shift))
 
         return self
 
@@ -320,26 +309,25 @@ class RackUnit(ExplodableObject):
         if not self.exploded:
             return self
 
-        distance = self.explosion_distance
-        vertical_explosion = distance * 0.75
+        vertical_explosion = self.explosion_distance * 0.75
 
-        # Unexplode all wall segments
-        for wall_type, segments in self.wall_segments.items():
+        # Undo additional vertical explosion for wall segments
+        for wall_type in ["front", "back", "left", "right"]:
+            # Find all wall segments of this type
+            segments = [
+                comp
+                for name, comp in self.child_components.items()
+                if name.startswith(f"{wall_type}_wall_")
+            ]
+
+            # Sort segments by their vertical index if available
+            segments.sort(key=lambda s: getattr(s, "vertical_index", 0))
+
+            # Undo additional vertical spacing for segments above the bottom
             for i, segment in enumerate(segments):
-                # First undo the vertical explosion for segments above the bottom
-                if len(segments) > 1 and i > 0:
+                if i > 0:  # Skip the bottom segment
                     vertical_shift = i * vertical_explosion
                     segment.translate((0, 0, -vertical_shift))
-
-                # Then standard unexplode
-                segment.unexplode()
-
-                # Update component reference
-                self.components[f"{wall_type}_wall_{i}"] = segment.wall_obj
-
-        # Move front modules back
-        for module in self.front_modules:
-            module.translate((distance * 1.5, 0, 0))
 
         super().unexplode()
         return self
@@ -352,19 +340,13 @@ class RackUnit(ExplodableObject):
             vector: (x, y, z) translation vector
         """
         # Translate floor
-        self.floor = self.floor.translate(vector)
-        self.components["floor"] = self.floor
+        floor = self.get_component("floor")
+        if floor:
+            floor = floor.translate(vector)
+            self.add_component("floor", floor)
 
-        # Translate all wall segments
-        for wall_type, segments in self.wall_segments.items():
-            for i, segment in enumerate(segments):
-                segment.translate(vector)
-                # Update component reference
-                self.components[f"{wall_type}_wall_{i}"] = segment.wall_obj
-
-        # Translate front modules
-        for module in self.front_modules:
-            module.translate(vector)
+        # Child components are automatically translated by parent's translate
+        super().translate(vector)
 
         return self
 
@@ -382,9 +364,12 @@ class RackUnit(ExplodableObject):
             explosion_distance = self.explosion_distance
 
         # Add extra distance for front modules
-        module_depth = (
-            max([m.depth for m in self.front_modules]) if self.front_modules else 0
-        )
+        front_modules = [
+            comp
+            for name, comp in self.child_components.items()
+            if name.startswith("front_module_")
+        ]
+        module_depth = max([m.depth for m in front_modules]) if front_modules else 0
 
         # If exploded, account for the explosion distance
         explosion_factor = 2 if self.exploded else 0

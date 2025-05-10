@@ -1,9 +1,9 @@
 import cadquery as cq
 
-from abstract_component import ExplodableObject
+from abstract_component import AbstractComponent
 
 
-class WallSegment(ExplodableObject):
+class WallSegment(AbstractComponent):
     """A segment of a rack unit wall with configurable height (1U or 2U)"""
 
     POSITIONS = ["front", "back", "left", "right"]
@@ -48,9 +48,6 @@ class WallSegment(ExplodableObject):
         self.thickness = thickness
         self.name = name or f"{wall_type}_wall_{height_units}U"
 
-        # The actual 3D object
-        self.wall_obj = None
-
         # Create the component
         self._create_components()
 
@@ -62,23 +59,27 @@ class WallSegment(ExplodableObject):
         """Create the wall segment"""
         if self.wall_type in ["front", "back"]:
             # Front and back walls are thin in X dimension, full width in Y
-            self.wall_obj = (
+            wall_obj = (
                 cq.Workplane("XY")
                 .box(self.thickness, self.width, self.height)
                 .translate((0, 0, self.height / 2))
             )  # Center at origin initially
         else:
             # Side walls (left/right) are thin in Y dimension, partial depth in X
-            self.wall_obj = (
+            wall_obj = (
                 cq.Workplane("XY")
                 .box(self.depth - 2 * self.thickness, self.thickness, self.height)
                 .translate((0, 0, self.height / 2))
             )  # Center at origin initially
 
         # Add to components dictionary
-        self.add_component("wall", self.wall_obj)
+        self.add_component("wall", wall_obj)
 
         return self
+
+    def get_main_object(self):
+        """Override to return the wall object as the main object"""
+        return self.get_component("wall")
 
     def get_practical_dimensions(self, explosion_distance=None):
         """Get practical dimensions of the wall segment"""
@@ -109,16 +110,13 @@ class WallSegment(ExplodableObject):
 
         # Direction depends on wall type
         if self.wall_type == "front":
-            self.wall_obj = self.wall_obj.translate((-distance, 0, 0))
+            self.translate((-distance, 0, 0))
         elif self.wall_type == "back":
-            self.wall_obj = self.wall_obj.translate((distance, 0, 0))
+            self.translate((distance, 0, 0))
         elif self.wall_type == "left":
-            self.wall_obj = self.wall_obj.translate((0, -distance, 0))
+            self.translate((0, -distance, 0))
         elif self.wall_type == "right":
-            self.wall_obj = self.wall_obj.translate((0, distance, 0))
-
-        # Update component
-        self.components["wall"] = self.wall_obj
+            self.translate((0, distance, 0))
 
         return self
 
@@ -131,22 +129,23 @@ class WallSegment(ExplodableObject):
 
         # Direction depends on wall type
         if self.wall_type == "front":
-            self.wall_obj = self.wall_obj.translate((distance, 0, 0))
+            self.translate((distance, 0, 0))
         elif self.wall_type == "back":
-            self.wall_obj = self.wall_obj.translate((-distance, 0, 0))
+            self.translate((-distance, 0, 0))
         elif self.wall_type == "left":
-            self.wall_obj = self.wall_obj.translate((0, distance, 0))
+            self.translate((0, distance, 0))
         elif self.wall_type == "right":
-            self.wall_obj = self.wall_obj.translate((0, -distance, 0))
-
-        # Update component
-        self.components["wall"] = self.wall_obj
+            self.translate((0, -distance, 0))
 
         super().unexplode()
         return self
 
     def translate(self, vector):
         """Translate the wall segment"""
-        self.wall_obj = self.wall_obj.translate(vector)
-        self.components["wall"] = self.wall_obj
+        wall_obj = self.get_component("wall")
+        if wall_obj:
+            wall_obj = wall_obj.translate(vector)
+            self.add_component("wall", wall_obj)
+
+        super().translate(vector)
         return self
