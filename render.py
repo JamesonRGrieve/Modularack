@@ -1,6 +1,9 @@
 import cadquery as cq
 
 from abstract_component import ExplodableObject
+from front_module import FrontModule, HardDriveBay
+from rack_unit import RackUnit
+from rack_unit_exploded_view import RackUnitExplodedView
 from wall_segment import WallSegment
 
 
@@ -12,13 +15,39 @@ def show_component(component, name_suffix=""):
         component: Component or ExplodableObject to show
         name_suffix: Suffix to add to the name for identification
     """
-    if hasattr(component, "components") and isinstance(component.components, dict):
+    if isinstance(component, RackUnit):
+        # Special handling for RackUnit
+        show_object(component.floor, name=f"floor_{name_suffix}")
+
+        # Show all wall segments
+        for wall_type, segments in component.wall_segments.items():
+            for i, segment in enumerate(segments):
+                show_component(segment, f"{name_suffix}_{i}")
+
+        # Show front modules
+        for i, module in enumerate(component.front_modules):
+            show_component(module, f"{name_suffix}_mod{i}")
+
+    elif hasattr(component, "components") and isinstance(component.components, dict):
         # It's an ExplodableObject, show each component
         for comp_name, comp_obj in component.components.items():
             show_object(comp_obj, name=f"{component.name}_{comp_name}_{name_suffix}")
+
     elif hasattr(component, "wall_obj"):
         # It's a WallSegment with wall_obj
         show_object(component.wall_obj, name=f"{component.name}_{name_suffix}")
+
+    elif hasattr(component, "object"):
+        # It's a FrontModule with object property
+        show_object(component.object, name=f"{component.name}_{name_suffix}")
+
+    elif hasattr(component, "rack_units"):
+        # It's a RackUnitExplodedView
+        for i, rack_unit in enumerate(component.rack_units):
+            show_component(
+                rack_unit, f"{name_suffix}_{rack_unit.depth}_{rack_unit.height_units}U"
+            )
+
     else:
         # It's a simple object
         obj_name = component.name if hasattr(component, "name") else "object"
@@ -641,4 +670,4 @@ if __name__ == "__main__" or True:  # True to ensure this runs in any environmen
 
     # Arrange and show
     view.arrange()
-    view.show()
+    show_component(view)
