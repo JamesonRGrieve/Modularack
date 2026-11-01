@@ -1,97 +1,534 @@
 # SPDX-License-Identifier: AGPL-3.0-or-later
-"""An nU rack chassis: four walls, a floor, and a grid of front-panel modules."""
+"""A 1U-4U rack chassis for 10 in or 19 in racks, built entirely from printed plates.
+
+Structure and load path:
+
+- The floor and cover are panels; side walls and the rear wall stand on the floor and
+  carry the cover, joined by edge joints (inserts in the walls' edges).
+- Rack ears bolt to the side walls' front edges. Chassis weight goes floor -> wall
+  inserts -> wall -> ear -> rack screws, along the layers of every part on the way.
+- The front is a grid (12 columns by one row per U) filled with cassettes. Every cassette
+  stands on the floor or the shelf of the cassette below, is screwed down to it and up
+  into the cover or the shelf above, and is bolted to its neighbours and to the walls.
+- A motherboard sits behind the cassettes on standoff bosses at the Intel hole positions,
+  its I/O facing the rear wall's aperture.
+"""
 
 from __future__ import annotations
 
+import math
+from collections import Counter
+from collections.abc import Callable
+from dataclasses import dataclass, field
+
 from build123d import Part, Vector
 
+from .cassette import (
+    FACE_THICKNESS,
+    SHELF_THICKNESS,
+    SIDE_THICKNESS,
+    Blank,
+    Cassette,
+    CassetteSlot,
+    ModuleKind,
+    cells_for,
+)
 from .component import Component
-from .floor import Floor
-from .front_panel import BAY_3_5_WIDTH_SEGMENTS, Bay35, FrontPanelModule
-from .standards import MINI_ITX, RACK_UNIT, MotherboardFormFactor
-from .wall import WallSegment, WallSide, stack_units
+from .fasteners import INSERT_M3_LONG, RACK_SCREW_CLEARANCE
+from .joints import EDGE_JOINT_END_MARGIN, Hardware, LapFastening, edge_joint, edge_positions, lap_joint
+from .layout import MK3S_BED, Bed, Panel
+from .plate import Boss, BossPocket, Edge, Frame, Plate, RectCut, Slot
+from .standards import (
+    BOARD_THICKNESS,
+    HOLE_C_TO_REAR_PANEL,
+    HOLE_POSITIONS_FROM_C,
+    IO_APERTURE_BELOW_BOARD_TOP,
+    IO_APERTURE_HEIGHT,
+    IO_APERTURE_OFFSET_FROM_C,
+    IO_APERTURE_WIDTH,
+    PANEL_HEIGHT_DEDUCTION,
+    RACK_UNIT,
+    STANDOFF_HEIGHT,
+    U_HOLE_OFFSETS,
+    MotherboardFormFactor,
+    MountingHole,
+    RackStandard,
+    panel_height,
+)
 
+MIN_UNITS = 1
+MAX_UNITS = 4
 GRID_COLUMNS = 12
-GRID_ROWS_PER_UNIT = 2
-FRONT_MODULE_GAP = 0.254
-"""Clearance between the front wall's inner face and a module's centre plane (0.01 in)."""
-DEFAULT_WALL_THICKNESS = 6.35
-DEFAULT_FLOOR_THICKNESS = 3.175
+WALL_THICKNESS = 9.0
+FLOOR_THICKNESS = 7.0
+EAR_THICKNESS = FACE_THICKNESS
+SIDE_CLEARANCE = 1.0
+"""Gap between each side of the chassis and the rack posts."""
+EAR_HOLES_PER_UNIT = (0, 2)
+"""Which of a U's three EIA holes the ears use: the outer pair, as standard ears do."""
+STANDOFF_BOSS_DIAMETER = 9.0
+BOARD_FRONT_CLEARANCE = 5.0
+"""Space between the back of the deepest cassette and the front edge of the motherboard."""
+LAP_COUNT = 2
+LAP_MIN_SPACING = 20.0
+LAP_GROOVE_CLEARANCE = 4.5
+"""Lap screws sit this far above the top of any sled groove, so their heads never meet a rail."""
+LAP_TOP_CLEARANCE = 5.0
 
 
-class GridOccupiedError(ValueError):
-    """A front module was placed over cells that are taken or off the grid."""
+@dataclass
+class Placement:
+    kind: ModuleKind
+    column: int
+    row: int
+    columns: int
 
 
+@dataclass
 class RackChassis(Component):
-    def __init__(
-        self,
-        depth: float,
-        width: float,
-        units: int,
-        wall_thickness: float = DEFAULT_WALL_THICKNESS,
-        floor_thickness: float = DEFAULT_FLOOR_THICKNESS,
-        motherboard_support: MotherboardFormFactor = MINI_ITX,
-    ) -> None:
-        super().__init__(f"rack_chassis_{units}U")
-        self.depth = depth
-        self.width = width
-        self.units = units
-        self.height = units * RACK_UNIT
-        self.wall_thickness = wall_thickness
-        self.rows = GRID_ROWS_PER_UNIT * units
-        self.segment_width = width / GRID_COLUMNS
-        self.segment_height = self.height / self.rows
-        self.occupied = [[False] * GRID_COLUMNS for _ in range(self.rows)]
-        self.add_child("floor", Floor(width, depth, floor_thickness, motherboard_support), Vector(0, 0, 0))
-        self._add_walls()
+    rack: RackStandard
+    units: int
+    depth: float
+    motherboard: MotherboardFormFactor | None = None
+    bed: Bed = MK3S_BED
+    placements: list[Placement] = field(default_factory=list)
+
+    def __post_init__(self) -> None:
+        if not MIN_UNITS <= self.units <= MAX_UNITS:
+            raise ValueError(f"Zephyrack chassis are {MIN_UNITS}U-{MAX_UNITS}U, got {self.units}U")
+        Component.__init__(self, f"chassis_{self.rack.name}_{self.units}U")
+        self.width = self.rack.opening - 2 * SIDE_CLEARANCE
+        self.height = panel_height(self.units)
+        self.inner_width = self.width - 2 * WALL_THICKNESS
+        self.inner_height = self.height - 2 * FLOOR_THICKNESS
+        self.cell_width = self.inner_width / GRID_COLUMNS
+        self.row_height = (self.inner_height - (self.units - 1) * SHELF_THICKNESS) / self.units
+        self.occupied = [[False] * GRID_COLUMNS for _ in range(self.units)]
+        self.max_module_columns = int(max(self.bed.usable_x, self.bed.usable_y) // self.cell_width)
+        self.built = False
 
     def solids(self) -> dict[str, Part]:
         return {}
 
-    def _add_walls(self) -> None:
-        t = self.wall_thickness
-        centres = {
-            WallSide.FRONT: (t / 2, 0.0),
-            WallSide.BACK: (self.depth - t / 2, 0.0),
-            WallSide.LEFT: (self.depth / 2, -self.width / 2 + t / 2),
-            WallSide.RIGHT: (self.depth / 2, self.width / 2 - t / 2),
-        }
-        for side, (x, y) in centres.items():
-            z = 0.0
-            for index, units in enumerate(stack_units(self.units)):
-                name = f"{side}_wall_{units}U_{index}"
-                segment = WallSegment(side, self.width, self.depth, units, t, index, name)
-                self.add_child(name, segment, Vector(x, y, z + segment.height / 2))
-                z += segment.height
+    # Grid -----------------------------------------------------------------------------------
 
-    def is_available(self, column: int, row: int, width_segments: int, height_segments: int) -> bool:
-        if column < 0 or row < 0 or column + width_segments > GRID_COLUMNS or row + height_segments > self.rows:
+    def row_bottom(self, row: int) -> float:
+        return FLOOR_THICKNESS + row * (self.row_height + SHELF_THICKNESS)
+
+    def is_available(self, column: int, row: int, columns: int, rows: int) -> bool:
+        if column < 0 or row < 0 or column + columns > GRID_COLUMNS or row + rows > self.units:
             return False
-        return not any(
-            self.occupied[r][c]
-            for r in range(row, row + height_segments)
-            for c in range(column, column + width_segments)
+        return not any(self.occupied[r][c] for r in range(row, row + rows) for c in range(column, column + columns))
+
+    def add_module(self, kind: ModuleKind, column: int, row: int, columns: int | None = None) -> Placement:
+        if self.built:
+            raise RuntimeError(f"{self.name} is already built")
+        span = columns if columns is not None else cells_for(kind, self.cell_width)
+        if span * self.cell_width < kind.min_width() - 1e-6:
+            raise ValueError(f"{type(kind).__name__} needs {cells_for(kind, self.cell_width)} columns, got {span}")
+        if span > self.max_module_columns:
+            raise ValueError(
+                f"{type(kind).__name__} would be {span * self.cell_width:.1f} mm wide; the bed prints modules up to "
+                f"{self.max_module_columns} columns ({self.max_module_columns * self.cell_width:.1f} mm)"
+            )
+        if not self.is_available(column, row, span, kind.rows):
+            raise ValueError(
+                f"{type(kind).__name__} ({span}x{kind.rows}) does not fit at column {column}, row {row} of {self.name}"
+            )
+        for r in range(row, row + kind.rows):
+            for c in range(column, column + span):
+                self.occupied[r][c] = True
+        placement = Placement(kind, column, row, span)
+        self.placements.append(placement)
+        return placement
+
+    def fill_blanks(self) -> None:
+        """Close every free run of cells, row by row, with a blank face."""
+        for row in range(self.units):
+            column = 0
+            while column < GRID_COLUMNS:
+                if self.occupied[row][column]:
+                    column += 1
+                    continue
+                end = column
+                while end < GRID_COLUMNS and not self.occupied[row][end]:
+                    end += 1
+                # Split long runs into blanks the bed can print, as evenly as the cells allow.
+                run = end - column
+                pieces = math.ceil(run / self.max_module_columns)
+                for k in range(pieces):
+                    width = run // pieces + (1 if k < run % pieces else 0)
+                    self.add_module(Blank(), column, row, width)
+                    column += width
+
+    # Building ---------------------------------------------------------------------------------
+
+    def build(self) -> Hardware:
+        """Lay out every plate and joint. Call once, after placing modules."""
+        if self.built:
+            raise RuntimeError(f"{self.name} is already built")
+        self.fill_blanks()
+        self.built = True
+        hardware = Hardware([])
+        cassettes = self._cassettes()
+        self._check_board_clearance(cassettes)
+        standoffs = self._standoffs()
+        self._panels(cassettes, standoffs)
+        for cassette in cassettes.values():
+            self.add_child(cassette)
+            hardware.items += cassette.hardware
+        # Joints are laid tightest-first: each later joint's stations slide clear of earlier ones.
+        hardware.items += self._rear_corner_joints().items
+        hardware.items += self._ears().items
+        hardware.items += self._floor_cover_joints().items
+        hardware.items += self._cassette_joints(cassettes).items
+        self._board(standoffs)
+        for panel in (self.floor, self.cover, self.left_wall, self.right_wall, self.rear_wall):
+            hardware.items += panel.screws
+        self.hardware = hardware.items
+        return hardware
+
+    def bill_of_materials(self) -> Counter[str]:
+        return Counter(self.hardware)
+
+    def _slot(self, placement: Placement) -> CassetteSlot:
+        y_left = self.inner_width / 2 - placement.column * self.cell_width
+        y_right = y_left - placement.columns * self.cell_width
+        top_row = placement.row + placement.kind.rows - 1
+        z_bottom = self.row_bottom(placement.row)
+        z_top = self.row_bottom(top_row) + self.row_height
+        face_bottom = 0.0 if placement.row == 0 else z_bottom - SHELF_THICKNESS / 2
+        face_top = self.height if top_row == self.units - 1 else z_top + SHELF_THICKNESS / 2
+        rows = tuple(self.row_bottom(r) for r in range(placement.row, top_row + 1))
+        return CassetteSlot(
+            y_left,
+            y_right,
+            z_bottom,
+            z_top,
+            rows,
+            self.row_height,
+            face_bottom,
+            face_top,
+            placement.row,
+            placement.column,
+            placement.columns,
         )
 
-    def add_front_module(self, module: FrontPanelModule, column: int, row: int) -> None:
-        if not self.is_available(column, row, module.width_segments, module.height_segments):
-            raise GridOccupiedError(
-                f"{module.name} ({module.width_segments}x{module.height_segments}) does not fit at "
-                f"column {column}, row {row} of {self.name}"
-            )
-        for r in range(row, row + module.height_segments):
-            for c in range(column, column + module.width_segments):
-                self.occupied[r][c] = True
-        module.fit(self.segment_width, self.segment_height)
-        y = -self.width / 2 + self.segment_width * (column + module.width_segments / 2)
-        z = self.segment_height * (row + module.height_segments / 2)
-        self.add_child(f"front_module_{column}_{row}", module, Vector(self.wall_thickness + FRONT_MODULE_GAP, y, z))
+    def _cassettes(self) -> dict[tuple[int, int], Cassette]:
+        cassettes: dict[tuple[int, int], Cassette] = {}
+        for placement in sorted(self.placements, key=lambda p: (p.row, p.column)):
+            name = f"{self.name}_r{placement.row}c{placement.column}"
+            cassette = Cassette(name, placement.kind, self._slot(placement))
+            if placement.row + placement.kind.rows < self.units:
+                cassette.add_shelf()
+            cassettes[(placement.row, placement.column)] = cassette
+        return cassettes
 
-    def fill_with_drive_bays(self) -> None:
-        """Fill every free run of three cells, row by row, with a 3.5 in bay."""
-        for row in range(self.rows):
-            for column in range(0, GRID_COLUMNS, BAY_3_5_WIDTH_SEGMENTS):
-                bay = Bay35(f"hdd_bay_{column}_{row}")
-                if self.is_available(column, row, bay.width_segments, bay.height_segments):
-                    self.add_front_module(bay, column, row)
+    def _check_board_clearance(self, cassettes: dict[tuple[int, int], Cassette]) -> float:
+        deepest = max(c.x_back for c in cassettes.values()) + SHELF_THICKNESS
+        if self.motherboard is None:
+            if deepest > self.depth - WALL_THICKNESS:
+                raise ValueError(f"{self.name}: cassettes are {deepest:.1f} mm deep, the chassis only {self.depth}")
+            return deepest
+        board_front = self._board_rear_x() - self.motherboard.depth
+        if board_front < deepest + BOARD_FRONT_CLEARANCE:
+            raise ValueError(
+                f"{self.name}: a {self.motherboard.name} board needs the chassis "
+                f"{deepest + BOARD_FRONT_CLEARANCE - board_front:.1f} mm deeper"
+            )
+        if self.motherboard.width > self.inner_width:
+            raise ValueError(
+                f"{self.motherboard.name} is wider than the {self.inner_width:.1f} mm {self.rack.name} chassis"
+            )
+        return board_front
+
+    def _board_rear_x(self) -> float:
+        assert self.motherboard is not None
+        hole_c_x = self.depth - WALL_THICKNESS - HOLE_C_TO_REAR_PANEL
+        return hole_c_x + self.motherboard.hole_c_from_corner[1]
+
+    def _standoffs(self) -> dict[MountingHole, tuple[float, float]]:
+        """Rack X/Y of every hole of the board, with its I/O edge toward the rear wall and centred left-right."""
+        if self.motherboard is None:
+            return {}
+        board = self.motherboard
+        rear_x = self._board_rear_x()
+        left_y = board.width / 2
+        cx, cy = board.hole_c_from_corner
+        return {
+            hole: (rear_x - (cy + HOLE_POSITIONS_FROM_C[hole][1]), left_y - (cx + HOLE_POSITIONS_FROM_C[hole][0]))
+            for hole in sorted(board.holes)
+        }
+
+    def _panels(
+        self, cassettes: dict[tuple[int, int], Cassette], standoffs: dict[MountingHole, tuple[float, float]]
+    ) -> None:
+        w, h, d, t = self.width, self.height, self.depth, WALL_THICKNESS
+        e, f = EAR_THICKNESS, FLOOR_THICKNESS
+        boss = STANDOFF_BOSS_DIAMETER / 2 + 2
+        side_lines = sorted({y for c in cassettes.values() for y in (c.slot.y_left, c.slot.y_right)})
+        # Floor/cover v runs from -w/2 (floor) or +w/2 (cover); keep seams off cassette side plates and bosses.
+        floor_keep_v = [(y - SIDE_THICKNESS - 4 + w / 2, y + SIDE_THICKNESS + 4 + w / 2) for y in side_lines]
+        floor_keep_v += [(y + w / 2 - boss, y + w / 2 + boss) for _, y in standoffs.values()]
+        floor_keep_u = [(x - e - boss, x - e + boss) for x, _ in standoffs.values()]
+        cover_keep_v = [(w / 2 - y - SIDE_THICKNESS - 4, w / 2 - y + SIDE_THICKNESS + 4) for y in side_lines]
+        self.floor = Panel(
+            f"{self.name}_floor",
+            d - e,
+            w,
+            f,
+            Frame(Vector(e, -w / 2, 0), Vector(1, 0, 0), Vector(0, 0, 1)),
+            self.bed,
+            floor_keep_u,
+            floor_keep_v,
+            Vector(0, 0, -1),
+        )
+        self.cover = Panel(
+            f"{self.name}_cover",
+            d - e,
+            w,
+            f,
+            Frame(Vector(e, w / 2, h), Vector(1, 0, 0), Vector(0, 0, -1)),
+            self.bed,
+            [],
+            cover_keep_v,
+            Vector(0, 0, 1),
+        )
+        self.left_wall = Panel(
+            f"{self.name}_left_wall",
+            d - e,
+            h - 2 * f,
+            t,
+            Frame(Vector(e, w / 2, f), Vector(1, 0, 0), Vector(0, -1, 0)),
+            self.bed,
+            explode_direction=Vector(0, 1, 0),
+        )
+        self.right_wall = Panel(
+            f"{self.name}_right_wall",
+            d - e,
+            h - 2 * f,
+            t,
+            Frame(Vector(d, -w / 2, f), Vector(-1, 0, 0), Vector(0, 1, 0)),
+            self.bed,
+            explode_direction=Vector(0, -1, 0),
+        )
+        self.rear_wall = Panel(
+            f"{self.name}_rear_wall",
+            w - 2 * t,
+            h - 2 * f,
+            t,
+            Frame(Vector(d, w / 2 - t, f), Vector(0, -1, 0), Vector(-1, 0, 0)),
+            self.bed,
+            self._aperture_keepout(),
+            explode_direction=Vector(1, 0, 0),
+        )
+        for panel in (self.floor, self.cover, self.left_wall, self.right_wall, self.rear_wall):
+            self.add_child(panel)
+        self._cut_aperture()
+
+    def _aperture_span(self) -> tuple[float, float, float, float] | None:
+        """The rear I/O aperture as (u0, v0, u1, v1) in the rear wall's frame, clipped to the wall."""
+        if self.motherboard is None:
+            return None
+        board = self.motherboard
+        near_y = board.width / 2 - board.hole_c_from_corner[0] - IO_APERTURE_OFFSET_FROM_C
+        far_y = near_y - IO_APERTURE_WIDTH
+        u0 = self.width / 2 - WALL_THICKNESS - near_y
+        u1 = self.width / 2 - WALL_THICKNESS - far_y
+        board_top = FLOOR_THICKNESS + STANDOFF_HEIGHT + BOARD_THICKNESS
+        v0 = board_top - IO_APERTURE_BELOW_BOARD_TOP - FLOOR_THICKNESS
+        v1 = min(v0 + IO_APERTURE_HEIGHT, self.inner_height)
+        return u0, max(v0, 0.0), u1, v1
+
+    def _aperture_keepout(self) -> list[tuple[float, float]]:
+        span = self._aperture_span()
+        return [] if span is None else [(span[0] - 4, span[2] + 4)]
+
+    def _cut_aperture(self) -> None:
+        span = self._aperture_span()
+        if span is None:
+            return
+        u0, v0, u1, v1 = span
+        for (i, j), plate in self.rear_wall.segments.items():
+            pu, pv = self.rear_wall.u_bounds[i], self.rear_wall.v_bounds[j]
+            cu0, cu1 = max(u0 - pu, -1.0), min(u1 - pu, plate.length + 1)
+            cv0, cv1 = max(v0 - pv, -1.0), min(v1 - pv, plate.width + 1)
+            if cu0 < cu1 and cv0 < cv1:
+                plate.add(RectCut(cu0, cv0, cu1, cv1))
+
+    def _rear_corner_joints(self) -> Hardware:
+        hardware = edge_joint(self.left_wall, self.rear_wall, Edge.U0)
+        hardware.items += edge_joint(self.right_wall, self.rear_wall, Edge.U1).items
+        return hardware
+
+    def _floor_cover_joints(self) -> Hardware:
+        hardware = Hardware([])
+        for wall in (self.left_wall, self.right_wall, self.rear_wall):
+            # An I/O aperture can take most of a narrow rear wall; its corners then carry the joint.
+            minimum = 1 if wall is self.rear_wall and self.motherboard is not None else None
+            hardware.items += edge_joint(self.floor, wall, Edge.V0, minimum=minimum).items
+            hardware.items += edge_joint(self.cover, wall, Edge.V1, minimum=minimum).items
+        return hardware
+
+    def _cassette_joints(self, cassettes: dict[tuple[int, int], Cassette]) -> Hardware:
+        # Side laps have the least room (above the sled grooves), so they go first and the
+        # floor/shelf/cover stations slide clear of them.
+        hardware = self._side_laps(cassettes)
+        shelves_by_row: dict[int, list[Plate]] = {}
+        for (row, _), cassette in cassettes.items():
+            if cassette.shelf is not None:
+                top = row + cassette.kind.rows - 1
+                shelves_by_row.setdefault(top, []).append(cassette.shelf)
+        for (row, _), cassette in cassettes.items():
+            below: Panel | list[Panel | Plate]
+            below = self.floor if row == 0 else list(shelves_by_row.get(row - 1, []))
+            above: Panel | Plate = self.cover if cassette.shelf is None else cassette.shelf
+            for plate in (cassette.left, cassette.right):
+                hardware.items += edge_joint(below, plate, Edge.V0).items
+                hardware.items += edge_joint(above, plate, Edge.V1, _offset_stations(plate.length)).items
+        return hardware
+
+    def _lap_z(self, *cassettes: Cassette) -> float:
+        """Lap screw height: above every sled groove on the shared face, inside the cassette."""
+        first = cassettes[0].slot
+        groove = max(c.kind.groove_top() for c in cassettes)
+        z = first.z_bottom + max(groove + LAP_GROOVE_CLEARANCE, first.row_height / 2)
+        return min(z, first.z_bottom + first.row_height - LAP_TOP_CLEARANCE)
+
+    def _place_laps(
+        self,
+        resolve: Callable[[Vector], Plate | None],
+        side: Plate,
+        y: float,
+        z: float,
+        x_from: float,
+        x_to: float,
+        fastening: LapFastening,
+    ) -> Hardware:
+        """Up to LAP_COUNT lap screws along a shared face, each slid to the nearest clear spot."""
+        hardware = Hardware([])
+        chosen: list[float] = []
+        span = x_to - x_from
+        for k in range(LAP_COUNT):
+            target = x_from + span * (k + 0.5) / LAP_COUNT
+            for offset in sorted(range(-int(span / 2), int(span / 2) + 1), key=abs):
+                x = target + offset
+                if not x_from < x < x_to or any(abs(x - c) < LAP_MIN_SPACING for c in chosen):
+                    continue
+                point = Vector(x, y, z)
+                a = resolve(point)
+                if a is None:
+                    continue
+                made = lap_joint(a, side, [point], fastening, minimum=0)
+                if made.items:
+                    hardware.items += made.items
+                    chosen.append(x)
+                    break
+        if not chosen:
+            raise ValueError(f"No clear spot to bolt {side.name} along x {x_from:.1f}-{x_to:.1f}")
+        return hardware
+
+    def _side_laps(self, cassettes: dict[tuple[int, int], Cassette]) -> Hardware:
+        """Bolt neighbouring cassettes together, and the outer ones to the walls."""
+        hardware = Hardware([])
+        for cassette in cassettes.values():
+            record = cassette.slot
+            x0, x1 = max(cassette.x_front, EAR_THICKNESS), cassette.x_back
+            z = self._lap_z(cassette)
+            if record.column == 0:
+                hardware.items += self._place_laps(
+                    _wall_resolver(self.left_wall), cassette.left, cassette.slot.y_left, z, x0, x1, LapFastening.INSERT
+                ).items
+            if record.column + record.columns == GRID_COLUMNS:
+                hardware.items += self._place_laps(
+                    _wall_resolver(self.right_wall),
+                    cassette.right,
+                    cassette.slot.y_right,
+                    z,
+                    x0,
+                    x1,
+                    LapFastening.INSERT,
+                ).items
+            neighbour = cassettes.get((record.row, record.column + record.columns))
+            if neighbour is not None:
+                lo, hi = max(x0, neighbour.x_front), min(x1, neighbour.x_back)
+                hardware.items += self._place_laps(
+                    _always(cassette.right),
+                    neighbour.left,
+                    cassette.slot.y_right,
+                    self._lap_z(cassette, neighbour),
+                    lo,
+                    hi,
+                    LapFastening.NUT,
+                ).items
+        return hardware
+
+    def _board(self, standoffs: dict[MountingHole, tuple[float, float]]) -> None:
+        for x, y in standoffs.values():
+            u, v = x - EAR_THICKNESS, y + self.width / 2
+            located = self.floor.segment_at(u, v, STANDOFF_BOSS_DIAMETER / 2)
+            if located is None:
+                raise ValueError(f"Standoff at ({x:.1f}, {y:.1f}) lands on a floor seam")
+            plate, lu, lv = located
+            plate.add(Boss(lu, lv, STANDOFF_BOSS_DIAMETER, STANDOFF_HEIGHT))
+            plate.add(BossPocket(lu, lv, INSERT_M3_LONG.bore_diameter, INSERT_M3_LONG.length, STANDOFF_HEIGHT))
+
+    def _ears(self) -> Hardware:
+        hardware = Hardware([])
+        p, w, t, e = self.rack.panel_width, self.width, WALL_THICKNESS, EAR_THICKNESS
+        ear_length = p / 2 - (w / 2 - t)
+        hole_u = self.rack.hole_spacing / 2 - (w / 2 - t)
+        heights = [
+            u * RACK_UNIT + offset - PANEL_HEIGHT_DEDUCTION / 2
+            for u in range(self.units)
+            for index, offset in enumerate(U_HOLE_OFFSETS)
+            if index in EAR_HOLES_PER_UNIT
+        ]
+        for side, origin, wall, edge in (
+            ("left", Vector(0, w / 2 - t, 0), self.left_wall, Edge.U0),
+            ("right", Vector(0, -p / 2, 0), self.right_wall, Edge.U1),
+        ):
+            ear = Plate(
+                f"{self.name}_{side}_ear",
+                ear_length,
+                self.height,
+                e,
+                Frame(origin, Vector(0, 1, 0), Vector(1, 0, 0)),
+                Vector(-1, 0, 0),
+            )
+            u = hole_u if side == "left" else ear_length - hole_u
+            for z in heights:
+                ear.add(Slot(u, z, RACK_SCREW_CLEARANCE, 2 * self.rack.hole_spacing_tolerance))
+            self.add_child(ear)
+            hardware.items += edge_joint(ear, wall, edge).items
+        return hardware
+
+
+def _offset_stations(span: float) -> list[float]:
+    """Top-edge stations, offset half a pitch from the bottom-edge ones so screws from above and below never meet."""
+    base = edge_positions(span)
+    half = (base[1] - base[0]) / 2
+    shifted = [p + half for p in base[:-1]]
+    return [p for p in shifted if EDGE_JOINT_END_MARGIN <= p <= span - EDGE_JOINT_END_MARGIN] or base
+
+
+def _always(plate: Plate) -> Callable[[Vector], Plate | None]:
+    """A resolver for a lap whose first plate is fixed (a neighbouring cassette's side)."""
+
+    def resolve(_point: Vector) -> Plate | None:
+        return plate
+
+    return resolve
+
+
+def _wall_resolver(wall: Panel) -> Callable[[Vector], Plate | None]:
+    """The wall segment a lap screw at a rack point would pass through, or None on a seam."""
+
+    def resolve(point: Vector) -> Plate | None:
+        local = wall.frame.to_local(point)
+        if wall.in_splice_zone(local.X, local.Y, 4):
+            return None
+        found = wall.segment_at(local.X, local.Y, margin=6)
+        return None if found is None else found[0]
+
+    return resolve

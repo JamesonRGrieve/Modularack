@@ -5,9 +5,13 @@ import pytest
 
 from zephyrack.standards import (
     ATX,
+    DRIVE_2_5,
+    DRIVE_3_5,
     MICRO_ATX,
     MINI_ITX,
     MM_PER_INCH,
+    RACK_10_INCH,
+    RACK_19_INCH,
     MotherboardFormFactor,
     MountingHole,
     panel_height,
@@ -92,3 +96,19 @@ def test_rack_holes_follow_the_half_five_eighths_pattern() -> None:
     assert heights == pytest.approx([6.35, 22.225, 38.1, 50.8, 66.675, 82.55])
     gaps = [round(b - a, 3) for a, b in pairwise(heights)]
     assert gaps == [15.875, 15.875, 12.7, 15.875, 15.875]
+
+
+def test_drive_dimensions_match_their_sff_tables() -> None:
+    # SFF-8301 Rev 1.9 Table 3-1: A3 101.60, A1 26.10, A2 147.00, A8 28.50, A9 101.60, A10 6.35.
+    assert (DRIVE_3_5.width, DRIVE_3_5.height, DRIVE_3_5.length) == (101.6, 26.10, 147.0)
+    assert DRIVE_3_5.side_hole_offsets == pytest.approx((28.50, 130.10))
+    assert DRIVE_3_5.side_hole_height == 6.35
+    # SFF-8201 Rev 3.4 Table 3-1: A4 69.85, A1 15.00, A6 100.45, A52 14.00, A53 90.60, A23 3.00.
+    assert (DRIVE_2_5.width, DRIVE_2_5.height, DRIVE_2_5.length) == (69.85, 15.0, 100.45)
+    assert DRIVE_2_5.side_hole_offsets == (14.0, 90.6)
+    assert DRIVE_2_5.side_hole_height == 3.0
+
+
+def test_rack_openings_follow_the_19_inch_post_geometry() -> None:
+    assert RACK_19_INCH.opening == pytest.approx(450.0)
+    assert RACK_10_INCH.opening == pytest.approx(236.525 - 15.1)

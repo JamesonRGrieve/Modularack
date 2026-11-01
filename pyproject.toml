@@ -48,5 +48,5 @@ ignore_missing_imports = true
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]
-addopts = "-ra -n auto --dist loadscope"
+addopts = "-ra -n 6 --dist load"
 filterwarnings = ["ignore::DeprecationWarning:lib3mf.*"]

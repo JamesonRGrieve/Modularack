@@ -1,32 +1,108 @@
 # Zephyrack
 
-A modular, 3D-printable rack system for 10 in (micro) and 19 in (full) racks, built in
-[build123d](https://github.com/gumyr/build123d). Every dimension is a parameter, and the
-published standards it builds against (EIA-310 rack holes, ATX-family motherboard holes)
-live in one module, `src/zephyrack/standards.py`, each with its source.
+A modular rack system you can print on a 250 x 210 mm bed: 1U to 4U chassis for 10 in
+(micro) and 19 in (full-size) racks, hot-swap drive bays, motherboard mounts, and a fully
+printed rack frame to put them in. Every part prints flat, without supports, and every
+connection between parts is a screw you can undo.
 
-## What's here
+Built in [build123d](https://github.com/gumyr/build123d). Every dimension is a parameter,
+and the published standards it builds against live in `src/zephyrack/standards.py` with
+their sources: EIA-310 rack holes, the Intel ATX / microATX / Mini-ITX mounting holes and
+I/O aperture, and the SFF-8301 (3.5 in) and SFF-8201 (2.5 in) drive dimensions.
 
-- **`RackChassis`**: an nU box. Its walls are stacked from 1U and 2U segments; its floor is
-  drilled for the largest motherboard it supports and every smaller one (Mini-ITX, microATX,
-  ATX), at the hole positions in the Intel specs.
-- **Front-panel grid**: 12 cells wide and 2 per U. Modules such as `Bay35` (a 3.5 in drive
-  bay face) take a block of cells, and overlapping or off-grid placement raises an error.
-- **`ExplodedView`**: several chassis side by side, exploded, for review.
+## What you can build
 
-Units are millimetres. +X runs from the front of the rack to the back, +Y to the left
-when facing +X, and +Z up.
+- **Chassis** (`RackChassis`): 10 in or 19 in, 1U to 4U, any depth. The front is a grid of
+  12 columns by one row per U, filled with modules:
+  - `DriveBay(DRIVE_3_5)` / `DriveBay(DRIVE_2_5)`: tool-less hot-swap bays. Each row holds a
+    sled screwed to the drive's SFF side holes; it slides in grooves and clicks home on a
+    sprung detent.
+  - `Vent` and `Blank` faces. Any cells left empty are closed with blanks automatically.
+  - Modules can span several rows; each one stands on the floor or the shelf of the module
+    below it.
+- **Motherboard**: Mini-ITX, microATX or ATX on printed standoff bosses at the Intel hole
+  positions, with the rear I/O aperture cut where the spec puts it. The chassis refuses a
+  board that doesn't fit, or one that would collide with the front modules.
+- **Printed rack** (`PrintedRack`): posts with the EIA-310 hole pattern and captive M6 nuts,
+  side panels, base and top. Two-post or four-post. Chassis also fit any bought EIA-310 rack;
+  their ear holes are slotted for the variation between brands (10 in racks have no formal
+  standard).
+
+`src/zephyrack/reference.py` has a reference design for every width and height.
+
+## How it's built
+
+**Every part is a flat plate printed outer face down**, plus the drive sleds, which print
+in the orientation they're used in. A flat-printed plate is strong in its own plane (along
+the layers) and weak across them, so the structure is arranged so the real loads run in
+each plate's plane:
+
+| Part | On the bed | Main load | Direction in the print |
+|---|---|---|---|
+| Floor, cover, shelves | outer face | equipment weight, spanning between walls | bending in the plate: along the layers |
+| Side and rear walls, module sides | outer face | weight carried to the ears; racking | in-plane: along the layers |
+| Rack ears, face plates, posts | front face | rack screws bearing on their holes | in-plane bearing: along the layers |
+| Splice strips | either face | tension across a panel seam | in-plane tension: along the layers |
+| Drive sled | rails standing | drive weight bending the rails; handle pull | rails bend in their own vertical plane; the handle bar bends in the bed plane: both along the layers |
+
+**Joints.** Two kinds, both detachable:
+
+- *Edge joint* (corners): a countersunk M3 screw through plate A into a heat-set insert
+  pressed into the edge of plate B. The insert lies in B's plane, so pulling on it shears
+  along B's layers; the screw bears on A along A's layers. Walls stand *on* the floor and
+  carry the cover, so weight bears in compression rather than hanging on the inserts.
+- *Flush splice* (seams in parts bigger than the bed): a strip set into matching rebates
+  on the inner faces of both pieces, screwed down into inserts. Both faces stay flush, so
+  modules slide over seams and the outside of the chassis stays flat.
+- Neighbouring modules are bolted together side by side (screw and captive nut), and the
+  outer modules to the chassis walls.
+
+Joint holes on both parts come from one point in the rack frame, so they line up by
+construction. A joint whose parts don't meet, or whose screw would hit another feature
+(a groove, an aperture, another joint), slides along the edge to a clear spot or fails
+the build with a precise error.
+
+**Support-free.** Holes through a plate are vertical in the print. Holes running in a
+plate's plane (edge inserts, sled screws) are teardrops with a 45 degree roof. Countersinks
+are 90 degree cones, vents in the sled bar are diamonds, and every pocket, groove and rebate
+opens on the top face.
 
 ## Building
 
 ```sh
 uv sync
-uv run zephyrack-build build   # STEP + PNG previews + one STL per printable part
+uv run zephyrack-build build                      # every reference design
+uv run zephyrack-build build chassis_19in_2U      # just one
 uv run pytest
 ```
 
-`build/reference_view.png` is the exploded reference set. `build/floor_*_top.png` shows
-each floor's standoff pattern from above.
+For each design, `build/<design>/` gets `stl/` (every part already in print orientation),
+a STEP assembly, `assembled.png`, `exploded.png` and `bom.txt` (printed parts plus every
+screw, insert and nut). `build/report.txt` summarises the checks.
+
+## What the checks prove
+
+For every reference design, the test suite and the build report check that:
+
+- every part fits the bed (MK3S / MK3S+ 250 x 210 x 210 mm less a 5 mm margin);
+- every part is one valid solid;
+- no surface of any part faces down more steeply than 45 degrees off the bed, sampled
+  across every face (so teardrops and countersinks are checked over their whole extent);
+- no two parts of the assembled design overlap.
+
+Representative parts (a wall segment, a sled, an ear, a rack post, a splice strip) slice
+cleanly in PrusaSlicer 2.9 with supports off.
+
+## Before you print a full set
+
+Print coupons first: a short wall segment with two edge inserts, a splice strip and its two
+mating corners, one sled in its bay, and an ear against your rack. The clearances (sled
+groove, detent, insert bores, drive-screw recesses) are starting values; tune them in
+`cassette.py`, `sled.py` and `fasteners.py`.
+
+Hardware is M3 throughout (countersunk ISO 10642 screws, CNC Kitchen M3x5.7 and M3x3
+heat-set inserts, ISO 4032 nuts), M6 nuts in printed rack posts, and the drives' own
+6-32 / M3 screws for the sleds.
 
 ## Development
 

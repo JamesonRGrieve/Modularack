@@ -21,6 +21,11 @@ U_HOLE_OFFSETS = (6.35, 22.225, 38.1)
 """Mounting hole centres within one U, measured up from the U boundary (1/2-5/8-5/8 in pitch)."""
 
 
+POST_INNER_EDGE_TO_HOLE = 7.55
+"""19 in: hole columns are 465.1 apart and the clear opening is 450, so each post's inner edge sits
+7.55 mm inside its hole column. Applied to 10 in racks too, which have no standard of their own."""
+
+
 @dataclass(frozen=True)
 class RackStandard:
     """Horizontal dimensions of one rack width."""
@@ -32,6 +37,11 @@ class RackStandard:
     """Centre-to-centre distance between the left and right hole columns."""
     hole_spacing_tolerance: float
     """Variation in hole_spacing seen across real racks; mounting holes are slotted by this much."""
+
+    @property
+    def opening(self) -> float:
+        """Clear width between the posts."""
+        return self.hole_spacing - 2 * POST_INNER_EDGE_TO_HOLE
 
 
 RACK_19_INCH = RackStandard(
@@ -48,7 +58,6 @@ RACK_10_INCH = RackStandard(
     hole_spacing=236.525,
     hole_spacing_tolerance=1.0,
 )
-RACK_STANDARDS = {standard.name: standard for standard in (RACK_19_INCH, RACK_10_INCH)}
 
 
 def panel_height(units: int) -> float:
@@ -181,4 +190,51 @@ ATX = MotherboardFormFactor(
         }
     ),
 )
-FORM_FACTORS = {form_factor.name: form_factor for form_factor in (MINI_ITX, MICRO_ATX, ATX)}
+
+STANDOFF_HEIGHT = 6.35
+"""Board underside above the chassis floor: microATX 1.2 section 2.4.2 requires 0.250 in clearance."""
+BOARD_THICKNESS = 1.57
+HOLE_C_TO_REAR_PANEL = 12.27
+"""Hole row C/B to the inside of the chassis rear panel (microATX 1.2 Figure 4, 0.483 in)."""
+
+
+@dataclass(frozen=True)
+class DriveFormFactor:
+    """A drive's outline and its side mounting holes, from its SFF specification."""
+
+    name: str
+    width: float
+    height: float
+    length: float
+    side_hole_offsets: tuple[float, float]
+    """Side hole centres measured from the connector end."""
+    side_hole_height: float
+    """Side hole centre above the drive's base."""
+    screw: str
+    screw_clearance: float
+
+
+# SFF-8301 Rev 1.9 Table 3-1: A3 width, A1 height (1 in class), A2 length max, A8 and A8+A9
+# side holes from the connector end, A10 hole height, 6-32 UNC thread.
+DRIVE_3_5 = DriveFormFactor(
+    name="3.5in",
+    width=101.6,
+    height=26.10,
+    length=147.0,
+    side_hole_offsets=(28.50, 28.50 + 101.60),
+    side_hole_height=6.35,
+    screw="6-32 UNC x 1/4 in pan head",
+    screw_clearance=3.66,  # close fit for #6 (0.144 in)
+)
+# SFF-8201 Rev 3.4 Table 3-1: A4 width, A1 height (15 mm class), A6 length max, A52/A53 side holes
+# from the connector end, A23 hole height, M3 thread.
+DRIVE_2_5 = DriveFormFactor(
+    name="2.5in",
+    width=69.85,
+    height=15.0,
+    length=100.45,
+    side_hole_offsets=(14.0, 90.6),
+    side_hole_height=3.0,
+    screw="M3x4 pan head (ISO 7045)",
+    screw_clearance=3.4,
+)
