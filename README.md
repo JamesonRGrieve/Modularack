@@ -128,9 +128,34 @@ is judged on CalculiX's second-order (C3D10) solution.
 
 The analysis drove two design changes: the ears are 9 mm thick (at 6 mm the 19 in 1U ear
 reached 14.7 MPa interlayer shear around its top screw, x1.2), and wall seams are staggered
-against floor and cover seams so no seam cuts the whole box. FEA assumes solid, isotropic
-material; infill, perimeters and print quality move the real numbers, which the coupon prints
-below are for.
+against floor and cover seams so no seam cuts the whole box.
+
+### As printed
+
+A sliced part isn't solid: PrusaSlicer's stock MK3 profile (0.20mm QUALITY) lays 2 perimeters
+(0.9 mm), 4 bottom and 5 top layers and fills the rest with 15 % gyroid. `infill.py` splits a
+plate into that solid shell and its sparse core and meshes both together, so the FEA can check
+a part at the settings it is really printed with. Published infill tests disagree on how stiff
+each pattern is, so the core is bracketed rather than guessed: once carrying nothing (the floor
+for any pattern) and once at its full material fraction (the ceiling).
+
+On the stock profile the 19 in 1U ear falls to x0.39 in-layer and x0.28 across the layers with
+the core ignored, and x1.45 / x0.95 even at the ceiling. No sparse setting tried (up to 4
+perimeters, 8 + 8 skin layers, 40 % infill) reaches x2, so **ears print at 100 % infill**,
+which is the solid case in the table above. Side walls with the infill ignored:
+
+| Chassis | Stock (2 perimeters) | Structural (4 perimeters) |
+|---|---|---|
+| 10 in 1U | x3.4 | x4.6 |
+| 19 in 1U | x1.75 | x2.4 |
+| 19 in 2U | x7.0 | x8.5 |
+| 19 in 4U | x19 | x21 |
+
+So every part carries the print settings it is verified at (`print_settings.py`), and `bom.txt`
+lists them: **ears solid; everything else the stock profile with 4 perimeters**. Only the ears
+and side walls are checked as printed so far; the joints (insert pull-out, nut laps, splices)
+and the printed rack posts are not, and nor is print quality, which the coupon prints below are
+for.
 
 ## Before you print a full set
 

@@ -32,7 +32,8 @@ EXPLODE_DISTANCE = 60.0
 
 def bill_of_materials(design: Component, hardware: list[str]) -> str:
     lines = [f"# {design.name}", "", "## Printed parts", ""]
-    lines += [f"- {name}" for name in design.printable_parts()]
+    settings = design.part_print_settings()
+    lines += [f"- {name} ({settings[name].describe()})" for name in design.printable_parts()]
     lines += ["", "## Hardware", ""]
     lines += [f"- {count} x {item}" for item, count in sorted(Counter(hardware).items())]
     return "\n".join(lines) + "\n"

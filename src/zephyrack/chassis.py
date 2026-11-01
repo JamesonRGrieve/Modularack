@@ -37,6 +37,7 @@ from .fasteners import INSERT_M3_LONG, RACK_SCREW_CLEARANCE
 from .joints import EDGE_JOINT_END_MARGIN, Hardware, LapFastening, edge_joint, edge_positions, lap_joint
 from .layout import MK3S_BED, Bed, Panel
 from .plate import Boss, BossPocket, Edge, Frame, Plate, RectCut, Slot
+from .print_settings import SOLID
 from .standards import (
     BOARD_THICKNESS,
     CEB,
@@ -509,6 +510,8 @@ class RackChassis(Component):
                 Frame(origin, Vector(0, 1, 0), Vector(1, 0, 0)),
                 Vector(-1, 0, 0),
             )
+            # Printed with sparse infill the ears fall below twice their two-post load (fea, infill).
+            ear.print_settings = SOLID
             u = hole_u if side == "left" else ear_length - hole_u
             for z in heights:
                 ear.add(Slot(u, z, RACK_SCREW_CLEARANCE, 2 * self.rack.hole_spacing_tolerance))

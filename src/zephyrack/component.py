@@ -16,6 +16,8 @@ from abc import ABC, abstractmethod
 
 from build123d import Compound, Location, Part, Pos, Vector
 
+from .print_settings import STRUCTURAL, PrintSettings
+
 
 class Component(ABC):
     """A named node in an assembly, with its own solids and child components."""
@@ -26,6 +28,8 @@ class Component(ABC):
         self.children: dict[str, Component] = {}
         self.hardware: list[str] = []
         """Screws, inserts and nuts this assembly consumes (filled in by assemblies that build joints)."""
+        self.print_settings: PrintSettings = STRUCTURAL
+        """The slicer settings this component's solids are verified at."""
 
     @abstractmethod
     def solids(self) -> dict[str, Part]:
@@ -70,3 +74,12 @@ class Component(ABC):
                     raise ValueError(f"Two printable parts are both named {path!r}")
                 parts[path] = solid
         return parts
+
+    def part_print_settings(self) -> dict[str, PrintSettings]:
+        """The print settings of every part `printable_parts` returns, under the same keys."""
+        settings: dict[str, PrintSettings] = {}
+        for component in self.descendants():
+            for key in component.solids():
+                path = component.name if key in ("plate", "part") else f"{component.name}.{key}"
+                settings[path] = component.print_settings
+        return settings

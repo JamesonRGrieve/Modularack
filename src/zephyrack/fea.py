@@ -26,12 +26,14 @@ from dataclasses import dataclass
 from pathlib import Path
 
 import numpy as np
-from build123d import export_step
+from build123d import Compound, Part, export_step
 from skfem import Basis, ElementTetP1, ElementVector, MeshTet1, asm, condense, solve
 from skfem.models.elasticity import lame_parameters, linear_elasticity
 
 from .chassis import FLOOR_THICKNESS, WALL_THICKNESS, RackChassis
+from .infill import EMPTY_CORE, split, voigt_core, wall_section_modulus
 from .plate import Plate, Slot, ThroughHole
+from .print_settings import PrintSettings
 from .reference import reference_builders
 from .sled import Sled
 from .standards import DRIVE_3_5
@@ -43,6 +45,7 @@ CCX = os.environ.get("ZEPHYRACK_CCX", "/opt/calculix-freecad-1.1.4/bin/ccx")
 SOLVER_TIMEOUT = 1800
 MESH_SIZE = 1.5
 """Largest tetrahedron edge, mm."""
+MESH_RETRY_SCALE = 0.85
 
 
 @dataclass(frozen=True)
@@ -116,16 +119,40 @@ def chassis_mass(chassis: RackChassis) -> float:
     return printed + payload
 
 
-def _mesh(step: Path, work: Path) -> tuple[dict[int, tuple[float, float, float]], list[list[int]]]:
+def _mesh(source: Path, work: Path) -> tuple[dict[int, tuple[float, float, float]], list[list[int]], list[int]]:
+    """Second-order tetrahedra of a STEP (or a .geo merging several), with each element's volume tag."""
     msh = work / "part.msh"
-    subprocess.run(
-        [GMSH, str(step), "-3", "-order", "2", "-clmax", str(MESH_SIZE), "-format", "msh2", "-o", str(msh)],
-        check=True,
-        capture_output=True,
-        timeout=SOLVER_TIMEOUT,
-    )
+    # gmsh's 3D mesher occasionally gives up on a thin sliver; a slightly finer mesh gets past it.
+    for size in (MESH_SIZE, MESH_SIZE * MESH_RETRY_SCALE):
+        result = subprocess.run(
+            [
+                GMSH,
+                str(source),
+                "-3",
+                "-order",
+                "2",
+                "-clmax",
+                str(size),
+                # Curved second-order elements on small holes can invert; straighten them out.
+                "-setnumber",
+                "Mesh.HighOrderOptimize",
+                "2",
+                "-format",
+                "msh2",
+                "-o",
+                str(msh),
+            ],
+            capture_output=True,
+            text=True,
+            timeout=SOLVER_TIMEOUT,
+        )
+        if result.returncode == 0:
+            break
+    else:
+        raise RuntimeError(f"gmsh failed on {source.name}: {result.stdout[-1000:]}")
     nodes: dict[int, tuple[float, float, float]] = {}
     elements: list[list[int]] = []
+    volumes: list[int] = []
     lines = msh.read_text().splitlines()
     i = lines.index("$Nodes") + 2
     while lines[i] != "$EndNodes":
@@ -140,8 +167,28 @@ def _mesh(step: Path, work: Path) -> tuple[dict[int, tuple[float, float, float]]
             # gmsh orders the last two edge nodes (2-3, 1-3) opposite to CalculiX C3D10.
             connectivity[8], connectivity[9] = connectivity[9], connectivity[8]
             elements.append(connectivity)
+            volumes.append(int(fields[4]))  # tags: physical, elementary (the volume)
         i += 1
-    return nodes, elements
+    return nodes, elements, volumes
+
+
+def _mesh_regions(shell: Part, core: Part, work: Path) -> tuple[dict[int, Vector3], list[list[int]], frozenset[int]]:
+    """One conformal mesh of shell and core, and which elements are the core's."""
+    export_step(Compound([shell, core]), work / "parts.step")
+    (work / "part.geo").write_text('SetFactory("OpenCASCADE");\nMerge "parts.step";\nCoherence;\n')
+    nodes, elements, volumes = _mesh(work / "part.geo", work)
+    # gmsh numbers the fragments itself, and thick perimeters can cut the core into several pieces:
+    # each volume belongs to the core if one of its elements sits inside the core solid.
+    probe: dict[int, Vector3] = {}
+    for element, volume in zip(elements, volumes, strict=True):
+        if volume not in probe:
+            corners = np.array([nodes[n] for n in element[:4]])
+            x, y, z = corners.mean(axis=0)
+            probe[volume] = (float(x), float(y), float(z))
+    core_tags = {tag for tag, point in probe.items() if core.is_inside(point)}
+    if not core_tags or core_tags == set(probe):
+        raise RuntimeError("Could not tell the shell's elements from the core's")
+    return nodes, elements, frozenset(k for k, v in enumerate(volumes) if v in core_tags)
 
 
 def _write_deck(
@@ -151,17 +198,22 @@ def _write_deck(
     kind: str,
     fixed: list[int],
     forces: dict[int, tuple[float, float, float]],
+    core: frozenset[int] = frozenset(),
+    core_fraction: float = 1.0,
 ) -> None:
     lines = ["*NODE"] + [f"{n},{x},{y},{z}" for n, (x, y, z) in nodes.items()]
     lines += ["*NSET, NSET=NALL"] + [str(n) for n in nodes]
     lines.append(f"*ELEMENT, TYPE={kind}, ELSET=EALL")
     lines += [f"{k + 1}," + ",".join(str(n) for n in e) for k, e in enumerate(elements)]
+    lines += ["*ELSET, ELSET=SHELL"] + [str(k + 1) for k in range(len(elements)) if k not in core]
     lines += ["*NSET, NSET=FIXED"] + [str(n) for n in fixed]
+    lines += ["*MATERIAL, NAME=PLA", "*ELASTIC", f"{PLA.modulus},{PLA.poisson}"]
+    lines += ["*SOLID SECTION, ELSET=SHELL, MATERIAL=PLA"]
+    if core:
+        lines += ["*ELSET, ELSET=CORE"] + [str(k + 1) for k in sorted(core)]
+        lines += ["*MATERIAL, NAME=INFILL", "*ELASTIC", f"{PLA.modulus * core_fraction},{PLA.poisson}"]
+        lines += ["*SOLID SECTION, ELSET=CORE, MATERIAL=INFILL"]
     lines += [
-        "*MATERIAL, NAME=PLA",
-        "*ELASTIC",
-        f"{PLA.modulus},{PLA.poisson}",
-        "*SOLID SECTION, ELSET=EALL, MATERIAL=PLA",
         "*STEP",
         "*STATIC",
         "*BOUNDARY",
@@ -175,8 +227,15 @@ def _write_deck(
 
 
 def _results(dat: Path) -> tuple[float, list[tuple[float, ...]]]:
+    displacement, stresses, _ = _element_results(dat)
+    return displacement, stresses
+
+
+def _element_results(dat: Path) -> tuple[float, list[tuple[float, ...]], list[int]]:
+    """Largest displacement, integration-point stresses, and the (0-based) element of each."""
     displacement = 0.0
     stresses: list[tuple[float, ...]] = []
+    owners: list[int] = []
     section = ""
     for line in dat.read_text().splitlines():
         if "displacements" in line:
@@ -196,7 +255,8 @@ def _results(dat: Path) -> tuple[float, list[tuple[float, ...]]]:
             displacement = max(displacement, math.sqrt(sum(v * v for v in values[1:])))
         elif section == "s" and len(values) == 8:
             stresses.append(tuple(values[2:]))
-    return displacement, stresses
+            owners.append(int(values[0]) - 1)
+    return displacement, stresses, owners
 
 
 def von_mises(s: tuple[float, ...]) -> float:
@@ -230,6 +290,8 @@ class EarProblem:
     """Each load is a total force spread evenly over a set of nodes."""
     load_n: float
     moment_nmm: float
+    core: frozenset[int] = frozenset()
+    """Elements of the sparse infill core (indices into `elements`); empty for a solid part."""
 
     def corners(self) -> set[int]:
         return {n for e in self.elements for n in e[:4]}
@@ -248,8 +310,11 @@ class EarProblem:
         return {n: (f[0], f[1], f[2]) for n, f in forces.items()}
 
 
-def ear_problem(chassis: RackChassis, work: Path) -> EarProblem:
-    """The left ear of a chassis hung from its front ears: half the weight, half the overturning moment."""
+def ear_problem(chassis: RackChassis, work: Path, settings: PrintSettings | None = None) -> EarProblem:
+    """The left ear of a chassis hung from its front ears: half the weight, half the overturning moment.
+
+    Solid by default; with print `settings` the ear is meshed as its solid shell and sparse core.
+    """
     ear = chassis.children[f"{chassis.name}_left_ear"]
     assert isinstance(ear, Plate)
     load = chassis_mass(chassis) * GRAVITY / 2
@@ -262,8 +327,12 @@ def ear_problem(chassis: RackChassis, work: Path) -> EarProblem:
     arms = {id(h): h.v - bearing_v for h in joints if h.v > bearing_v}
     second_moment = sum(a * a for a in arms.values())
     tensions = {key: moment * arm / second_moment for key, arm in arms.items()}
-    export_step(ear.solids()["plate"], work / "part.step")
-    nodes, elements = _mesh(work / "part.step", work)
+    core: frozenset[int] = frozenset()
+    if settings is None:
+        export_step(ear.solids()["plate"], work / "part.step")
+        nodes, elements, _ = _mesh(work / "part.step", work)
+    else:
+        nodes, elements, core = _mesh_regions(*split(ear, settings), work)
     fixed = [
         n
         for n, (u, v, w) in nodes.items()
@@ -295,7 +364,7 @@ def ear_problem(chassis: RackChassis, work: Path) -> EarProblem:
         if abs(w - ear.thickness) < 0.05 and u <= WALL_THICKNESS and abs(v - bearing_v) <= BEARING_HALF_HEIGHT
     ]
     loads.append((bearing, (0.0, 0.0, -sum(tensions.values()))))
-    return EarProblem(nodes, elements, fixed, loads, load, moment)
+    return EarProblem(nodes, elements, fixed, loads, load, moment, core)
 
 
 def solve_calculix(problem: EarProblem, work: Path, second_order: bool = True) -> tuple[float, list[tuple[float, ...]]]:
@@ -371,6 +440,53 @@ def cross_check_ear(name: str, chassis: RackChassis) -> tuple[EarResult, EarResu
 
 
 @dataclass(frozen=True)
+class PrintedEarResult:
+    """An ear as actually printed: its solid shell judged against the solid allowables, its core against
+    allowables scaled by the infill's density (as are its stiffness and the share of each layer it bonds)."""
+
+    settings: PrintSettings
+    core_fraction: float
+    shell: EarResult
+    core: EarResult | None
+    """Core stresses divided by the infill density; None when the core is taken as empty."""
+
+    @property
+    def passes(self) -> bool:
+        return self.shell.passes and (self.core is None or self.core.passes)
+
+
+def analyse_printed_ear(
+    name: str, chassis: RackChassis, settings: PrintSettings, core_fraction: float
+) -> PrintedEarResult:
+    """The ear meshed as shell and core, the core at `core_fraction` of solid stiffness."""
+    with tempfile.TemporaryDirectory() as directory:
+        work = Path(directory)
+        problem = ear_problem(chassis, work, settings)
+        fixed = list(problem.fixed)
+        forces = problem.nodal_forces(set(problem.nodes))
+        _write_deck(
+            work / "ear.inp", problem.nodes, problem.elements, "C3D10", fixed, forces, problem.core, core_fraction
+        )
+        subprocess.run([CCX, "-i", "ear"], cwd=work, check=True, capture_output=True, timeout=SOLVER_TIMEOUT)
+        displacement, stresses, owners = _element_results(work / "ear.dat")
+    shell = [s for s, e in zip(stresses, owners, strict=True) if e not in problem.core]
+    core: EarResult | None = None
+    if core_fraction > EMPTY_CORE:
+        density = settings.infill_density
+        scaled = [tuple(v / density for v in s) for s, e in zip(stresses, owners, strict=True) if e in problem.core]
+        core = _summarise(f"{name} core", problem, displacement, scaled)
+    return PrintedEarResult(settings, core_fraction, _summarise(name, problem, displacement, shell), core)
+
+
+def printed_ear_bounds(name: str, chassis: RackChassis, settings: PrintSettings) -> list[PrintedEarResult]:
+    """The ear with an empty core (the floor for every infill) and with the stiffest possible core."""
+    return [
+        analyse_printed_ear(name, chassis, settings, EMPTY_CORE),
+        analyse_printed_ear(name, chassis, settings, voigt_core(settings.infill_density)),
+    ]
+
+
+@dataclass(frozen=True)
 class WallResult:
     design: str
     bending_stress: float
@@ -393,6 +509,28 @@ def wall_bending(name: str, chassis: RackChassis) -> WallResult:
     return WallResult(name, 6 * moment / (WALL_THICKNESS * height**2))
 
 
+def printed_wall_bending(name: str, chassis: RackChassis, settings: PrintSettings) -> WallResult:
+    """`wall_bending` with the wall as printed and its core taken as empty: skins and edge perimeters only."""
+    load = chassis_mass(chassis) * GRAVITY / 2
+    moment = load * chassis.depth / 2
+    height = chassis.height - 2 * FLOOR_THICKNESS
+    return WallResult(name, moment / wall_section_modulus(WALL_THICKNESS, height, settings, EMPTY_CORE))
+
+
+def ear_as_printed(name: str, chassis: RackChassis) -> EarResult:
+    """The ear judged at its own print settings: solid if it is printed solid, else its shell alone."""
+    ear = chassis.children[f"{chassis.name}_left_ear"]
+    if ear.print_settings.infill_density >= 1:
+        return analyse_ear(name, chassis)
+    return analyse_printed_ear(name, chassis, ear.print_settings, EMPTY_CORE).shell
+
+
+def wall_as_printed(name: str, chassis: RackChassis) -> WallResult:
+    """The side wall judged at its own print settings, its infill taken as carrying nothing."""
+    segment = next(iter(chassis.left_wall.segments.values()))
+    return printed_wall_bending(name, chassis, segment.print_settings)
+
+
 def main() -> None:
     logging.basicConfig(level=logging.INFO, format="%(message)s")
     builders = reference_builders()
@@ -401,7 +539,7 @@ def main() -> None:
     for name in names:
         design = builders[name]()
         assert isinstance(design, RackChassis)
-        r = analyse_ear(name, design)
+        r = ear_as_printed(name, design)
         failed |= not r.passes
         logger.info(
             "%s: ear carries %.0f N + %.1f N.m; deflection %.2f mm; in-layer %.1f MPa (x%.1f); "
@@ -417,7 +555,12 @@ def main() -> None:
             r.interlayer_factor,
             "OK" if r.passes else "BELOW x2",
         )
-        wall = wall_bending(name, design)
+        wall = wall_as_printed(name, design)
         failed |= wall.factor < SAFETY_FACTOR
-        logger.info("%s: side wall in-plane bending %.1f MPa (x%.1f)", name, wall.bending_stress, wall.factor)
+        logger.info(
+            "%s: side wall as printed (infill ignored), in-plane bending %.1f MPa (x%.1f)",
+            name,
+            wall.bending_stress,
+            wall.factor,
+        )
     raise SystemExit(1 if failed else 0)
