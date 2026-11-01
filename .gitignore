@@ -5,3 +5,4 @@ build/
 .mypy_cache/
 .ruff_cache/
 .coverage
+render/node_modules/

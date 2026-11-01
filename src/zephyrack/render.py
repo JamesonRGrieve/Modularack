@@ -1,49 +1,46 @@
 # SPDX-License-Identifier: AGPL-3.0-or-later
-"""Headless shaded previews, so a model can be checked by eye without a CAD viewer."""
+"""Lit inspection renders from six angles, drawn by three.js in headless Chromium.
+
+`render_views` exports the shape as GLB and hands it to `render/render.mjs`, which draws front-left
+and rear-right isometrics, front, rear, top and side views with a real depth buffer, key/fill/rim
+lighting and feature edges only (creases over 25 degrees, never tessellation seams).
+
+Needs Node and the render/ package installed (`pnpm install` in render/), and a Chromium build:
+the newest in the Playwright cache, or ZEPHYRACK_CHROMIUM.
+"""
 
 from __future__ import annotations
 
+import os
+import subprocess
+import tempfile
 from pathlib import Path
 
-import matplotlib
+from build123d import Compound, Part, export_gltf
 
-matplotlib.use("Agg")
-
-import matplotlib.pyplot as plt
-import numpy as np
-from build123d import Compound, Part
-from matplotlib.colors import to_rgb
-from mpl_toolkits.mplot3d.art3d import Poly3DCollection
-
-TESSELLATION_TOLERANCE = 0.2
-FIGURE_SIZE_INCHES = (12.0, 9.0)
-DPI = 120
-ISOMETRIC_VIEW = (25.0, -135.0)
-"""(elevation, azimuth) in degrees: looking at the front-left corner from above."""
-TOP_VIEW = (90.0, -90.0)
-FACE_COLOUR = "#9db4c0"
-LIGHT_DIRECTION = np.array([-0.5, -0.4, 0.77]) / np.linalg.norm([-0.5, -0.4, 0.77])
-"""Unit vector toward the light: above, in front and to the right of the default view."""
-AMBIENT = 0.35
+RENDER_DIR = Path(__file__).resolve().parents[2] / "render"
+NODE = os.environ.get("ZEPHYRACK_NODE", "node")
+RENDER_TIMEOUT = 600
+GLTF_LINEAR_DEFLECTION = 0.05
+GLTF_ANGULAR_DEFLECTION = 0.2
 
 
-def render_png(shape: Compound | Part, path: Path, view: tuple[float, float] = ISOMETRIC_VIEW) -> None:
-    vertices, triangles = shape.tessellate(TESSELLATION_TOLERANCE)
-    points = np.array([(v.X, v.Y, v.Z) for v in vertices])
-    faces = points[np.array(triangles)]
-    normals = np.cross(faces[:, 1] - faces[:, 0], faces[:, 2] - faces[:, 0])
-    normals /= np.maximum(np.linalg.norm(normals, axis=1, keepdims=True), np.finfo(float).eps)
-    brightness = AMBIENT + (1 - AMBIENT) * np.abs(normals @ LIGHT_DIRECTION)
-    colours = np.clip(np.outer(brightness, to_rgb(FACE_COLOUR)), 0, 1)
-    figure = plt.figure(figsize=FIGURE_SIZE_INCHES)
-    axes = figure.add_subplot(projection="3d")
-    axes.add_collection3d(Poly3DCollection(faces, facecolors=colours, edgecolors=colours, linewidths=0.1))
-    box = shape.bounding_box()
-    axes.set_xlim(box.min.X, box.max.X)
-    axes.set_ylim(box.min.Y, box.max.Y)
-    axes.set_zlim(box.min.Z, box.max.Z)
-    axes.set_box_aspect((box.size.X, box.size.Y, max(box.size.Z, 1.0)))
-    axes.view_init(elev=view[0], azim=view[1])
-    axes.set_axis_off()
-    figure.savefig(path, dpi=DPI, bbox_inches="tight")
-    plt.close(figure)
+def render_views(shape: Compound | Part, path: Path, title: str = "") -> None:
+    """A lit six-view contact sheet of `shape`, written to `path` as PNG."""
+    with tempfile.TemporaryDirectory() as directory:
+        model = Path(directory) / "model.glb"
+        export_gltf(
+            shape,
+            model,
+            binary=True,
+            linear_deflection=GLTF_LINEAR_DEFLECTION,
+            angular_deflection=GLTF_ANGULAR_DEFLECTION,
+        )
+        result = subprocess.run(
+            [NODE, str(RENDER_DIR / "render.mjs"), str(model), str(path.resolve()), title],
+            capture_output=True,
+            text=True,
+            timeout=RENDER_TIMEOUT,
+        )
+    if result.returncode != 0:
+        raise RuntimeError(f"Render failed: {result.stderr[-2000:]}")

@@ -1,0 +1,123 @@
+<!doctype html>
+<!-- SPDX-License-Identifier: AGPL-3.0-or-later -->
+<html>
+<head>
+<meta charset="utf-8">
+<style>
+  *, *::before, *::after { box-sizing: border-box; }
+  html, body { margin: 0; background: #ffffff; }
+  canvas { display: block; }
+</style>
+<script type="importmap">
+{ "imports": { "three": "/node_modules/three/build/three.module.js",
+               "three/addons/": "/node_modules/three/examples/jsm/" } }
+</script>
+</head>
+<body>
+<canvas id="view"></canvas>
+<script type="module">
+import * as THREE from "three";
+import { GLTFLoader } from "three/addons/loaders/GLTFLoader.js";
+
+const params = new URLSearchParams(location.search);
+const VIEW_SIZE = Number(params.get("size") ?? 640);
+const COLUMNS = 3;
+const ROWS = 2;
+const TITLE_HEIGHT = 34;
+const LABEL_HEIGHT = 22;
+const EDGE_THRESHOLD_DEGREES = 25;
+const BODY_COLOUR = 0x9cbcd2;
+const EDGE_COLOUR = 0x1d2b36;
+const MARGIN = 1.08;
+
+// Glb is millimetres, Z up. Each view: a direction from the model toward the camera, and the screen's up.
+const VIEWS = [
+  ["front-left", [-1, 1, 0.75], [0, 0, 1]],
+  ["rear-right", [1, -1, 0.75], [0, 0, 1]],
+  ["front", [-1, 0, 0], [0, 0, 1]],
+  ["rear", [1, 0, 0], [0, 0, 1]],
+  ["top", [0, 0, 1], [1, 0, 0]],
+  ["left side", [0, 1, 0], [0, 0, 1]],
+];
+
+const canvas = document.getElementById("view");
+const renderer = new THREE.WebGLRenderer({ canvas, antialias: true, preserveDrawingBuffer: true });
+const width = VIEW_SIZE * COLUMNS;
+const height = (VIEW_SIZE + LABEL_HEIGHT) * ROWS + TITLE_HEIGHT;
+renderer.setSize(width, height);
+renderer.setScissorTest(true);
+renderer.shadowMap.enabled = true;
+
+const scene = new THREE.Scene();
+scene.add(new THREE.HemisphereLight(0xffffff, 0x8a8f96, 0.9));
+
+const gltf = await new GLTFLoader().loadAsync(params.get("model"));
+const model = gltf.scene;
+model.rotation.x = Math.PI / 2; // glTF is Y-up; build123d exports Z-up geometry into it.
+const material = new THREE.MeshStandardMaterial({ color: BODY_COLOUR, roughness: 0.65, metalness: 0.05,
+                                                  polygonOffset: true, polygonOffsetFactor: 1, polygonOffsetUnits: 1 });
+const edgeMaterial = new THREE.LineBasicMaterial({ color: EDGE_COLOUR });
+const meshes = [];
+model.traverse((node) => { if (node.isMesh) meshes.push(node); });
+for (const mesh of meshes) {
+  mesh.material = material;
+  mesh.castShadow = true;
+  mesh.receiveShadow = true;
+  mesh.geometry.computeVertexNormals();
+  // Feature edges only: crease angles above the threshold, never tessellation seams.
+  mesh.add(new THREE.LineSegments(new THREE.EdgesGeometry(mesh.geometry, EDGE_THRESHOLD_DEGREES), edgeMaterial));
+}
+scene.add(model);
+model.updateMatrixWorld(true);
+const box = new THREE.Box3().setFromObject(model);
+const centre = box.getCenter(new THREE.Vector3());
+const radius = box.getSize(new THREE.Vector3()).length() / 2;
+
+for (const [direction, intensity] of [[[-0.6, 0.5, 0.8], 1.6], [[0.7, -0.3, 0.4], 0.6], [[0.2, -0.9, -0.3], 0.4]]) {
+  const light = new THREE.DirectionalLight(0xffffff, intensity);
+  light.position.copy(centre).addScaledVector(new THREE.Vector3(...direction).normalize(), radius * 4);
+  light.target.position.copy(centre);
+  scene.add(light, light.target);
+}
+
+renderer.setClearColor(0xffffff, 1);
+renderer.setScissor(0, 0, width, height);
+renderer.setViewport(0, 0, width, height);
+renderer.clear();
+
+VIEWS.forEach(([name, direction, up], index) => {
+  const column = index % COLUMNS;
+  const row = Math.floor(index / COLUMNS);
+  const x = column * VIEW_SIZE;
+  const y = height - TITLE_HEIGHT - (row + 1) * (VIEW_SIZE + LABEL_HEIGHT);
+  const camera = new THREE.OrthographicCamera(-radius * MARGIN, radius * MARGIN, radius * MARGIN,
+                                              -radius * MARGIN, 0.1, radius * 10);
+  camera.up.set(...up);
+  camera.position.copy(centre).addScaledVector(new THREE.Vector3(...direction).normalize(), radius * 4);
+  camera.lookAt(centre);
+  renderer.setViewport(x, y, VIEW_SIZE, VIEW_SIZE);
+  renderer.setScissor(x, y, VIEW_SIZE, VIEW_SIZE);
+  renderer.render(scene, camera);
+});
+
+// Labels go on a 2D overlay canvas copied over the WebGL one.
+const overlay = document.createElement("canvas");
+overlay.width = width;
+overlay.height = height;
+const context = overlay.getContext("2d");
+context.drawImage(canvas, 0, 0);
+context.fillStyle = "#111";
+context.font = "bold 20px sans-serif";
+context.textAlign = "center";
+context.fillText(params.get("title") ?? "", width / 2, 24);
+context.font = "15px sans-serif";
+VIEWS.forEach(([name], index) => {
+  const column = index % COLUMNS;
+  const row = Math.floor(index / COLUMNS);
+  context.fillText(name, column * VIEW_SIZE + VIEW_SIZE / 2, TITLE_HEIGHT + row * (VIEW_SIZE + LABEL_HEIGHT) + 16);
+});
+document.body.replaceChildren(overlay);
+window.renderDone = true;
+</script>
+</body>
+</html>

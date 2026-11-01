@@ -45,7 +45,7 @@ strict = true
 python_version = "3.13"
 
 [[tool.mypy.overrides]]
-module = ["build123d.*", "bd_warehouse.*", "mpl_toolkits.*", "skfem.*"]
+module = ["build123d.*", "bd_warehouse.*", "mpl_toolkits.*", "skfem.*", "dolfinx.*", "basix.*", "ufl.*", "mpi4py.*", "petsc4py.*"]
 ignore_missing_imports = true
 
 [tool.pytest.ini_options]

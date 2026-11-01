@@ -75,13 +75,15 @@ opens on the top face.
 
 ```sh
 uv sync
+pnpm --dir render install                         # three.js renderer (headless Chromium)
 uv run zephyrack-build build                      # every reference design
 uv run zephyrack-build build chassis_19in_2U      # just one
 uv run pytest
 ```
 
 For each design, `build/<design>/` gets `stl/` (every part already in print orientation),
-a STEP assembly, `assembled.png`, `exploded.png` and `bom.txt` (printed parts plus every
+a STEP assembly, `assembled.png` and `exploded.png` (lit six-view sheets drawn by three.js in headless
+Chromium, the newest build in the Playwright cache or `ZEPHYRACK_CHROMIUM`) and `bom.txt` (printed parts plus every
 screw, insert and nut). `build/report.txt` summarises the checks.
 
 ## What the checks prove
@@ -117,9 +119,11 @@ chassis holds at least twice that load:
 | 19 in 2U | 13.4 kg | 7.5 MPa (x6.8) | 3.1 MPa shear (x5.4) | 0.11 mm | x27 |
 | 19 in 4U | 19.3 kg | 3.9 MPa (x13) | 1.6 MPa shear (x11) | 0.07 mm | x91 |
 
-The set-up is cross-checked by a second, independent solver: scikit-fem and CalculiX, given the
-same linear mesh and loads, agree to four significant figures (19 in 1U ear: 0.185 mm, 18.8 MPa
-in-layer, 8.21 MPa interlayer shear), so the mesh import, supports and loads are right. The design
+The set-up is cross-checked by five independent codes on the same linear mesh and loads: CalculiX,
+scikit-fem, FEniCSx (micromamba env `zephyrack-fenicsx`), Code_Aster (`simvia/code_aster` container)
+and Elmer (`openeuler/elmer` container). All five give the same displacement (19 in 1U ear:
+0.1852 mm); the four element-stress codes agree on stress to four figures (18.79 MPa in-layer,
+8.206 MPa interlayer shear), and Elmer's nodal-averaged stresses to within 10 %. The design
 is judged on CalculiX's second-order (C3D10) solution.
 
 The analysis drove two design changes: the ears are 9 mm thick (at 6 mm the 19 in 1U ear
