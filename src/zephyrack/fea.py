@@ -25,7 +25,10 @@ import tempfile
 from dataclasses import dataclass
 from pathlib import Path
 
+import numpy as np
 from build123d import export_step
+from skfem import Basis, ElementTetP1, ElementVector, MeshTet1, asm, condense, solve
+from skfem.models.elasticity import lame_parameters, linear_elasticity
 
 from .chassis import FLOOR_THICKNESS, WALL_THICKNESS, RackChassis
 from .plate import Plate, Slot, ThroughHole
@@ -145,11 +148,13 @@ def _write_deck(
     path: Path,
     nodes: dict[int, tuple[float, float, float]],
     elements: list[list[int]],
+    kind: str,
     fixed: list[int],
     forces: dict[int, tuple[float, float, float]],
 ) -> None:
     lines = ["*NODE"] + [f"{n},{x},{y},{z}" for n, (x, y, z) in nodes.items()]
-    lines.append("*ELEMENT, TYPE=C3D10, ELSET=EALL")
+    lines += ["*NSET, NSET=NALL"] + [str(n) for n in nodes]
+    lines.append(f"*ELEMENT, TYPE={kind}, ELSET=EALL")
     lines += [f"{k + 1}," + ",".join(str(n) for n in e) for k, e in enumerate(elements)]
     lines += ["*NSET, NSET=FIXED"] + [str(n) for n in fixed]
     lines += [
@@ -166,7 +171,6 @@ def _write_deck(
     for node, vector in forces.items():
         lines += [f"{node},{dof + 1},{value}" for dof, value in enumerate(vector) if value]
     lines += ["*NODE PRINT, NSET=NALL", "U", "*EL PRINT, ELSET=EALL", "S", "*END STEP"]
-    lines.insert(0, "*NSET, NSET=NALL, GENERATE\n1," + str(max(nodes)) + ",1")
     path.write_text("\n".join(lines) + "\n")
 
 
@@ -211,14 +215,45 @@ def _percentile(values: list[float]) -> float:
     return ordered[min(len(ordered) - 1, int(PEAK_PERCENTILE * len(ordered)))]
 
 
-def analyse_ear(name: str, chassis: RackChassis) -> EarResult:
+Vector3 = tuple[float, float, float]
+
+
+@dataclass
+class EarProblem:
+    """A meshed ear with its supports and loads, independent of the solver that runs it."""
+
+    nodes: dict[int, Vector3]
+    elements: list[list[int]]
+    """10-node tetrahedra in CalculiX C3D10 node order; the first four are the corners."""
+    fixed: list[int]
+    loads: list[tuple[list[int], Vector3]]
+    """Each load is a total force spread evenly over a set of nodes."""
+    load_n: float
+    moment_nmm: float
+
+    def corners(self) -> set[int]:
+        return {n for e in self.elements for n in e[:4]}
+
+    def nodal_forces(self, allowed: set[int]) -> dict[int, Vector3]:
+        """Each load's total spread over those of its nodes the solver's mesh has."""
+        forces: dict[int, list[float]] = {}
+        for selected, total in self.loads:
+            usable = [n for n in selected if n in allowed]
+            if not usable:
+                raise RuntimeError("A load has no nodes on this mesh")
+            for n in usable:
+                f = forces.setdefault(n, [0.0, 0.0, 0.0])
+                for k in range(3):
+                    f[k] += total[k] / len(usable)
+        return {n: (f[0], f[1], f[2]) for n, f in forces.items()}
+
+
+def ear_problem(chassis: RackChassis, work: Path) -> EarProblem:
     """The left ear of a chassis hung from its front ears: half the weight, half the overturning moment."""
     ear = chassis.children[f"{chassis.name}_left_ear"]
     assert isinstance(ear, Plate)
-    weight = chassis_mass(chassis) * GRAVITY
-    load = weight / 2
-    lever = chassis.depth / 2
-    moment = load * lever
+    load = chassis_mass(chassis) * GRAVITY / 2
+    moment = load * chassis.depth / 2
     slots = [f for f in ear.features if isinstance(f, Slot)]
     joints = [f for f in ear.features if isinstance(f, ThroughHole)]
     bearing_v = FLOOR_THICKNESS + BEARING_HALF_HEIGHT
@@ -227,70 +262,112 @@ def analyse_ear(name: str, chassis: RackChassis) -> EarResult:
     arms = {id(h): h.v - bearing_v for h in joints if h.v > bearing_v}
     second_moment = sum(a * a for a in arms.values())
     tensions = {key: moment * arm / second_moment for key, arm in arms.items()}
-    couple = sum(tensions.values())
-    with tempfile.TemporaryDirectory() as directory:
-        work = Path(directory)
-        export_step(ear.solids()["plate"], work / "part.step")
-        nodes, elements = _mesh(work / "part.step", work)
-        fixed = [
+    export_step(ear.solids()["plate"], work / "part.step")
+    nodes, elements = _mesh(work / "part.step", work)
+    fixed = [
+        n
+        for n, (u, v, w) in nodes.items()
+        if any(
+            abs(v - s.v) <= s.diameter / 2 + 0.05 and abs(u - s.u) <= s.travel / 2 + s.diameter / 2 + 0.05
+            for s in slots
+        )
+        and 0 < w < ear.thickness
+    ]
+
+    def hole_wall(h: ThroughHole) -> list[int]:
+        r = h.diameter / 2
+        return [n for n, (u, v, w) in nodes.items() if abs(math.hypot(u - h.u, v - h.v) - r) < 0.05]
+
+    def countersink(h: ThroughHole) -> list[int]:
+        return [
             n
             for n, (u, v, w) in nodes.items()
-            if any(
-                abs(v - s.v) <= s.diameter / 2 + 0.05 and abs(u - s.u) <= s.travel / 2 + s.diameter / 2 + 0.05
-                for s in slots
-            )
-            and 0 < w < ear.thickness
+            if h.diameter / 2 + 0.05 < math.hypot(u - h.u, v - h.v) <= h.countersink_diameter / 2 + 0.05
+            and w < (h.countersink_diameter - h.diameter) / 2 + 0.05
         ]
-        forces: dict[int, list[float]] = {}
 
-        def add(selected: list[int], total: tuple[float, float, float]) -> None:
-            if not selected:
-                raise RuntimeError(f"{name}: no mesh nodes for a load")
-            for n in selected:
-                f = forces.setdefault(n, [0.0, 0.0, 0.0])
-                for k in range(3):
-                    f[k] += total[k] / len(selected)
+    loads: list[tuple[list[int], Vector3]] = [(hole_wall(h), (0.0, -load / len(joints), 0.0)) for h in joints]
+    loads += [(countersink(h), (0.0, 0.0, tensions[id(h)])) for h in joints if id(h) in tensions]
+    # The left ear starts at the side wall's inner face, so the wall's front edge bears on u in [0, WALL_THICKNESS].
+    bearing = [
+        n
+        for n, (u, v, w) in nodes.items()
+        if abs(w - ear.thickness) < 0.05 and u <= WALL_THICKNESS and abs(v - bearing_v) <= BEARING_HALF_HEIGHT
+    ]
+    loads.append((bearing, (0.0, 0.0, -sum(tensions.values()))))
+    return EarProblem(nodes, elements, fixed, loads, load, moment)
 
-        def hole_wall(h: ThroughHole) -> list[int]:
-            r = h.diameter / 2
-            return [
-                n
-                for n, (u, v, w) in nodes.items()
-                if abs(math.hypot(u - h.u, v - h.v) - r) < 0.05 and 0 <= w <= ear.thickness
-            ]
 
-        def countersink(h: ThroughHole) -> list[int]:
-            return [
-                n
-                for n, (u, v, w) in nodes.items()
-                if h.diameter / 2 + 0.05 < math.hypot(u - h.u, v - h.v) <= h.countersink_diameter / 2 + 0.05
-                and w < (h.countersink_diameter - h.diameter) / 2 + 0.05
-            ]
+def solve_calculix(problem: EarProblem, work: Path, second_order: bool = True) -> tuple[float, list[tuple[float, ...]]]:
+    """Max displacement and integration-point stresses (xx, yy, zz, xy, xz, yz) from CalculiX."""
+    if second_order:
+        nodes, elements, kind = problem.nodes, problem.elements, "C3D10"
+    else:
+        corners = problem.corners()
+        nodes = {n: xyz for n, xyz in problem.nodes.items() if n in corners}
+        elements, kind = [e[:4] for e in problem.elements], "C3D4"
+    fixed = [n for n in problem.fixed if n in nodes]
+    _write_deck(work / "ear.inp", nodes, elements, kind, fixed, problem.nodal_forces(set(nodes)))
+    subprocess.run([CCX, "-i", "ear"], cwd=work, check=True, capture_output=True, timeout=SOLVER_TIMEOUT)
+    return _results(work / "ear.dat")
 
-        for h in joints:
-            add(hole_wall(h), (0.0, -load / len(joints), 0.0))
-        for h in joints:
-            if id(h) in tensions:
-                add(countersink(h), (0.0, 0.0, tensions[id(h)]))
-        # The left ear starts at the side wall's inner face, so the wall's front edge bears on u in [0, WALL_THICKNESS].
-        bearing = [
-            n
-            for n, (u, v, w) in nodes.items()
-            if abs(w - ear.thickness) < 0.05 and u <= WALL_THICKNESS and abs(v - bearing_v) <= BEARING_HALF_HEIGHT
-        ]
-        add(bearing, (0.0, 0.0, -couple))
-        _write_deck(work / "ear.inp", nodes, elements, fixed, {n: (f[0], f[1], f[2]) for n, f in forces.items()})
-        subprocess.run([CCX, "-i", "ear"], cwd=work, check=True, capture_output=True, timeout=SOLVER_TIMEOUT)
-        displacement, stresses = _results(work / "ear.dat")
+
+def solve_scikit_fem(problem: EarProblem) -> tuple[float, list[tuple[float, ...]]]:
+    """The same problem on the corner nodes with scikit-fem's linear tetrahedra: an independent solver check."""
+    corners = sorted(problem.corners())
+    index = {n: k for k, n in enumerate(corners)}
+    points = np.array([problem.nodes[n] for n in corners]).T
+    tets = np.array([[index[n] for n in e[:4]] for e in problem.elements]).T
+    mesh = MeshTet1(points, tets)
+    basis = Basis(mesh, ElementVector(ElementTetP1()))
+    lam, mu = lame_parameters(PLA.modulus, PLA.poisson)
+    stiffness = asm(linear_elasticity(lam, mu), basis)
+    load = np.zeros(basis.N)
+    for node, vector in problem.nodal_forces(set(corners)).items():
+        load[basis.nodal_dofs[:, index[node]]] += vector
+    fixed_dofs = basis.nodal_dofs[:, [index[n] for n in problem.fixed if n in index]].ravel()
+    displacement = solve(*condense(stiffness, load, D=fixed_dofs))
+    magnitude = float(np.sqrt((displacement.reshape(-1, 3) ** 2).sum(axis=1)).max())
+    grad = basis.interpolate(displacement).grad  # (3, 3, elements, points)
+    strain = 0.5 * (grad + grad.transpose(1, 0, 2, 3))
+    trace = strain[0, 0] + strain[1, 1] + strain[2, 2]
+    stress = 2 * mu * strain
+    for k in range(3):
+        stress[k, k] += lam * trace
+    rows = np.stack(
+        [stress[0, 0], stress[1, 1], stress[2, 2], stress[0, 1], stress[0, 2], stress[1, 2]], axis=-1
+    ).reshape(-1, 6)
+    return magnitude, [tuple(float(v) for v in row) for row in rows]
+
+
+def _summarise(name: str, problem: EarProblem, displacement: float, stresses: list[tuple[float, ...]]) -> EarResult:
     return EarResult(
         design=name,
-        load_n=load,
-        moment_nmm=moment,
+        load_n=problem.load_n,
+        moment_nmm=problem.moment_nmm,
         max_displacement=displacement,
         in_layer=_percentile([von_mises(s) for s in stresses]),
         across_layer_tension=_percentile([max(0.0, s[2]) for s in stresses]),
         interlayer_shear=_percentile([math.hypot(s[4], s[5]) for s in stresses]),
     )
+
+
+def analyse_ear(name: str, chassis: RackChassis) -> EarResult:
+    """Second-order CalculiX solution of the ear: the result the design is judged on."""
+    with tempfile.TemporaryDirectory() as directory:
+        work = Path(directory)
+        problem = ear_problem(chassis, work)
+        return _summarise(name, problem, *solve_calculix(problem, work))
+
+
+def cross_check_ear(name: str, chassis: RackChassis) -> tuple[EarResult, EarResult]:
+    """CalculiX C3D4 and scikit-fem P1 on the identical linear mesh and loads, which must agree."""
+    with tempfile.TemporaryDirectory() as directory:
+        work = Path(directory)
+        problem = ear_problem(chassis, work)
+        calculix = _summarise(name, problem, *solve_calculix(problem, work, second_order=False))
+        scikit = _summarise(name, problem, *solve_scikit_fem(problem))
+    return calculix, scikit
 
 
 @dataclass(frozen=True)

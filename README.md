@@ -117,6 +117,11 @@ chassis holds at least twice that load:
 | 19 in 2U | 13.4 kg | 7.5 MPa (x6.8) | 3.1 MPa shear (x5.4) | 0.11 mm | x27 |
 | 19 in 4U | 19.3 kg | 3.9 MPa (x13) | 1.6 MPa shear (x11) | 0.07 mm | x91 |
 
+The set-up is cross-checked by a second, independent solver: scikit-fem and CalculiX, given the
+same linear mesh and loads, agree to four significant figures (19 in 1U ear: 0.185 mm, 18.8 MPa
+in-layer, 8.21 MPa interlayer shear), so the mesh import, supports and loads are right. The design
+is judged on CalculiX's second-order (C3D10) solution.
+
 The analysis drove two design changes: the ears are 9 mm thick (at 6 mm the 19 in 1U ear
 reached 14.7 MPa interlayer shear around its top screw, x1.2), and wall seams are staggered
 against floor and cover seams so no seam cuts the whole box. FEA assumes solid, isotropic
