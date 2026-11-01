@@ -1,0 +1,52 @@
+[project]
+name = "zephyrack"
+version = "0.0.1"
+description = "Modular, 3D-printable rack system for 10 in and 19 in racks"
+license = "AGPL-3.0-or-later"
+authors = [
+    { name = "Jameson", email = "jamesonrgrieve@gmail.com" }
+]
+requires-python = ">=3.13"
+dependencies = [
+    "bd-warehouse>=0.4.0",
+    "build123d>=0.13.0",
+    "matplotlib>=3.10",
+    "numpy>=2",
+]
+
+[project.scripts]
+zephyrack-build = "zephyrack.build:main"
+
+[build-system]
+requires = ["uv_build>=0.11.16,<0.12.0"]
+build-backend = "uv_build"
+
+[dependency-groups]
+dev = [
+    "mypy>=2.4.1",
+    "pre-commit>=4.7.0",
+    "pytest>=9.2.0",
+    "pytest-cov>=7.1.0",
+    "pytest-xdist>=3.8.0",
+    "ruff>=0.17.3",
+]
+
+[tool.ruff]
+line-length = 120
+target-version = "py313"
+
+[tool.ruff.lint]
+select = ["E", "F", "W", "I", "B", "UP", "N", "SIM", "RUF"]
+
+[tool.mypy]
+strict = true
+python_version = "3.13"
+
+[[tool.mypy.overrides]]
+module = ["build123d.*", "bd_warehouse.*", "mpl_toolkits.*"]
+ignore_missing_imports = true
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+addopts = "-ra -n auto --dist loadscope"
+filterwarnings = ["ignore::DeprecationWarning:lib3mf.*"]
