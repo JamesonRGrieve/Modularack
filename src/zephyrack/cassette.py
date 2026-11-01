@@ -84,7 +84,7 @@ class ModuleKind(ABC):
     def depth(self) -> float:
         """Side plate length."""
 
-    def groove_top(self) -> float:
+    def groove_top(self, row_height: float) -> float:
         """Height above a row's bottom that the side plates' inner faces are cut up to (0 = uncut)."""
         return 0.0
 
@@ -201,10 +201,15 @@ class Vent(Blank):
 
 @dataclass
 class DriveBay(ModuleKind):
-    """A hot-swap bay: one sled per row, riding in grooves, stopped by a rear plate with a cable window."""
+    """A hot-swap bay: sleds riding in grooves, stacked as many to a row as fit, stopped by a rear plate.
+
+    `levels` fixes how many sleds share a row; by default the bay fits as many as the row height
+    allows (one 3.5 in or 15 mm 2.5 in drive, two 7 mm 2.5 in drives in a 1U row).
+    """
 
     drive: DriveFormFactor
     rows: int = 1
+    levels: int | None = None
 
     def min_width(self) -> float:
         rail_in_groove = GROOVE_DEPTH - SLED_SIDE_CLEARANCE
@@ -214,45 +219,63 @@ class DriveBay(ModuleKind):
     def front_x(self) -> float:
         return 0.0
 
+    def _nominal(self) -> SledGeometry:
+        """Sled heights and length don't depend on the bay's width."""
+        return SledGeometry(self.drive, self.drive.width + 2 * RAIL_MIN_WIDTH + 1)
+
     def depth(self) -> float:
-        return SledGeometry(self.drive, self.drive.width + 2 * RAIL_MIN_WIDTH + 1).length + REAR_GAP
+        return self._nominal().length + REAR_GAP
+
+    def pitch(self) -> float:
+        """Height one sled level takes in a row."""
+        g = self._nominal()
+        return SLED_LIFT + max(g.rail_height, g.bar_height) + SLED_TOP_CLEARANCE
+
+    def levels_in(self, row_height: float) -> int:
+        fit = int(row_height // self.pitch())
+        wanted = fit if self.levels is None else self.levels
+        if wanted < 1 or wanted > fit:
+            raise ValueError(
+                f"{self.drive.name} bay: {wanted} sled level(s) of {self.pitch():.1f} mm don't fit a "
+                f"{row_height:.1f} mm row (room for {fit})"
+            )
+        return wanted
 
     def sled_geometry(self, slot: CassetteSlot) -> SledGeometry:
         return SledGeometry(self.drive, slot.inner_width + 2 * (GROOVE_DEPTH - SLED_SIDE_CLEARANCE), GROOVE_DEPTH)
 
-    def groove_top(self) -> float:
-        g = SledGeometry(self.drive, self.drive.width + 2 * RAIL_MIN_WIDTH + 1)
-        return SLED_LIFT + g.rail_height + GROOVE_CLEARANCE
+    def groove_top(self, row_height: float) -> float:
+        top_level = self.levels_in(row_height) - 1
+        return top_level * self.pitch() + SLED_LIFT + self._nominal().rail_height + GROOVE_CLEARANCE
 
     def build(self, cassette: Cassette) -> Hardware:
         s = cassette.slot
         geometry = self.sled_geometry(s)
-        needed = SLED_LIFT + max(geometry.rail_height, geometry.bar_height) + SLED_TOP_CLEARANCE
-        if needed > s.row_height:
-            raise ValueError(
-                f"{cassette.name}: a {self.drive.name} sled needs {needed:.1f} mm, the row has {s.row_height:.1f}"
-            )
+        levels = self.levels_in(s.row_height)
         length = cassette.left.length
-        for plate, row_bottom in cassette.side_rows():
-            low = row_bottom + SLED_LIFT - GROOVE_CLEARANCE
-            high = row_bottom + SLED_LIFT + geometry.rail_height + GROOVE_CLEARANCE
-            plate.add(RectCut(-1, low, length + 1, high, GROOVE_DEPTH))
-        for row_bottom in s.row_bottoms:
-            # The detent arm is on the sled's y = 0 rail, which sits against the right side plate.
-            detent_u = length - geometry.detent_x
-            local_bottom = row_bottom - s.z_bottom
-            cassette.right.add(
-                RectCut(
-                    detent_u - DETENT_NOTCH_WIDTH / 2,
-                    local_bottom + SLED_LIFT - GROOVE_CLEARANCE,
-                    detent_u + DETENT_NOTCH_WIDTH / 2,
-                    local_bottom + SLED_LIFT + geometry.rail_height + GROOVE_CLEARANCE,
-                    GROOVE_DEPTH + DETENT_BUMP + 0.2,
+        detent_u = length - geometry.detent_x
+        sleds = 0
+        for row_index, row_bottom in enumerate(s.row_bottoms):
+            for level in range(levels):
+                base = row_bottom + level * self.pitch()
+                local = base - s.z_bottom
+                low = local + SLED_LIFT - GROOVE_CLEARANCE
+                high = local + SLED_LIFT + geometry.rail_height + GROOVE_CLEARANCE
+                for plate in (cassette.left, cassette.right):
+                    plate.add(RectCut(-1, low, length + 1, high, GROOVE_DEPTH))
+                # The detent arm is on the sled's y = 0 rail, which sits against the right side plate.
+                cassette.right.add(
+                    RectCut(
+                        detent_u - DETENT_NOTCH_WIDTH / 2,
+                        low,
+                        detent_u + DETENT_NOTCH_WIDTH / 2,
+                        high,
+                        GROOVE_DEPTH + DETENT_BUMP + 0.2,
+                    )
                 )
-            )
-            origin = Vector(0, s.y_right + SIDE_THICKNESS - GROOVE_DEPTH + SLED_SIDE_CLEARANCE, row_bottom + SLED_LIFT)
-            index = s.row_bottoms.index(row_bottom)
-            cassette.add_child(Sled(f"{cassette.name}_sled{index}", geometry, Pos(*origin)))
+                origin = Vector(0, s.y_right + SIDE_THICKNESS - GROOVE_DEPTH + SLED_SIDE_CLEARANCE, base + SLED_LIFT)
+                cassette.add_child(Sled(f"{cassette.name}_sled{row_index}{level}", geometry, Pos(*origin)))
+                sleds += 1
         stop = Plate(
             f"{cassette.name}_rear_stop",
             s.width,
@@ -267,7 +290,7 @@ class DriveBay(ModuleKind):
         cassette.add_child(stop)
         hardware = edge_joint(stop, cassette.left, Edge.U1)
         hardware.items += edge_joint(stop, cassette.right, Edge.U0).items
-        hardware.items += [f"{self.drive.screw}"] * (4 * len(s.row_bottoms))
+        hardware.items += [f"{self.drive.screw}"] * (4 * sleds)
         return hardware
 
 

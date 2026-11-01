@@ -7,7 +7,7 @@ restating numbers, so a correction lands in one place.
 
 from __future__ import annotations
 
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from enum import StrEnum
 
 MM_PER_INCH = 25.4
@@ -89,6 +89,16 @@ class MountingHole(StrEnum):
     M = "M"
     R = "R"
     S = "S"
+    X = "X"
+    Y = "Y"
+    Z = "Z"
+    F_ALT = "F'"
+    H_ALT = "H'"
+    J_ALT = "J'"
+    K_ALT = "K'"
+    L_ALT = "L'"
+    M_ALT = "M'"
+    Y_ALT = "Y'"
 
 
 # Hole centres relative to hole C, +x toward hole F (along the rear I/O edge),
@@ -107,6 +117,18 @@ HOLE_POSITIONS_FROM_C: dict[MountingHole, tuple[float, float]] = {
     MountingHole.A: (-124.46, 0.0),
     MountingHole.G: (-124.46, 154.94),
     MountingHole.K: (-124.46, 227.33),
+    # SSI EEB 2011 v1.0.1 Figure 2 (datum A, the ATX datum): the extended rows and the
+    # alternate ("prime") locations a board may use when a legacy hole is blocked.
+    MountingHole.X: (-129.54, 312.42),
+    MountingHole.Y: (0.0, 312.42),
+    MountingHole.Z: (157.48, 312.42),
+    MountingHole.Y_ALT: (-45.72, 312.42),
+    MountingHole.F_ALT: (157.48, 0.0),
+    MountingHole.H_ALT: (-45.72, 177.8),
+    MountingHole.J_ALT: (157.48, 181.61),
+    MountingHole.K_ALT: (-124.46, 250.19),
+    MountingHole.L_ALT: (0.0, 250.19),
+    MountingHole.M_ALT: (157.48, 250.19),
 }
 MOUNTING_HOLE_DIAMETER = 3.96
 """Board mounting hole diameter (0.156 in)."""
@@ -191,6 +213,37 @@ ATX = MotherboardFormFactor(
     ),
 )
 
+_ATX_HOLES = ATX.holes
+# SSI EEB 2011 v1.0.1 section 2.1: the ATX board "stretched" to 305 x 330 mm, same datum and
+# hole C. Legacy ATX holes plus the X/Y/Z row. CEB is the 266.7 mm deep variant without that row.
+EEB = MotherboardFormFactor(
+    name="ssi-eeb",
+    width=304.8,
+    depth=330.2,
+    hole_c_from_corner=(140.97, 10.16),
+    holes=_ATX_HOLES | {MountingHole.X, MountingHole.Y, MountingHole.Z},
+)
+CEB = MotherboardFormFactor(
+    name="ssi-ceb",
+    width=304.8,
+    depth=266.7,
+    hole_c_from_corner=(140.97, 10.16),
+    holes=_ATX_HOLES,
+)
+EEB_ALTERNATE_HOLES = frozenset(
+    {
+        MountingHole.F_ALT,
+        MountingHole.H_ALT,
+        MountingHole.J_ALT,
+        MountingHole.K_ALT,
+        MountingHole.L_ALT,
+        MountingHole.M_ALT,
+        MountingHole.Y_ALT,
+    }
+)
+"""Alternates a specific EEB/CEB board may use instead of a legacy hole. The spec leaves unused
+locations unpopulated, so a chassis adds only the ones its board actually has."""
+
 STANDOFF_HEIGHT = 6.35
 """Board underside above the chassis floor: microATX 1.2 section 2.4.2 requires 0.250 in clearance."""
 BOARD_THICKNESS = 1.57
@@ -238,3 +291,6 @@ DRIVE_2_5 = DriveFormFactor(
     screw="M3x4 pan head (ISO 7045)",
     screw_clearance=3.4,
 )
+# SFF-8201 Rev 3.4 Table 3-1 A1 heights; the outline and side holes are the same for every height.
+DRIVE_2_5_9_5MM = replace(DRIVE_2_5, name="2.5in-9.5mm", height=9.5)
+DRIVE_2_5_7MM = replace(DRIVE_2_5, name="2.5in-7mm", height=7.0)

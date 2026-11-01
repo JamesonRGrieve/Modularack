@@ -5,8 +5,11 @@ import pytest
 
 from zephyrack.standards import (
     ATX,
+    CEB,
     DRIVE_2_5,
     DRIVE_3_5,
+    EEB,
+    HOLE_POSITIONS_FROM_C,
     MICRO_ATX,
     MINI_ITX,
     MM_PER_INCH,
@@ -112,3 +115,35 @@ def test_drive_dimensions_match_their_sff_tables() -> None:
 def test_rack_openings_follow_the_19_inch_post_geometry() -> None:
     assert RACK_19_INCH.opening == pytest.approx(450.0)
     assert RACK_10_INCH.opening == pytest.approx(236.525 - 15.1)
+
+
+def test_eeb_holes_match_ssi_figure_2() -> None:
+    # SSI EEB 2011 v1.0.1 Figure 2: datum A is 16.51 mm from the left edge, 10.16 from the rear.
+    holes = EEB.hole_positions()
+    a = (16.51, 10.16)
+    expected = {
+        MountingHole.A: (0.0, 0.0),
+        MountingHole.C: (124.46, 0.0),
+        MountingHole.F: (281.94, 22.86),
+        MountingHole.G: (0.0, 154.94),
+        MountingHole.H: (124.46, 154.94),
+        MountingHole.J: (281.94, 154.94),
+        MountingHole.K: (0.0, 227.33),
+        MountingHole.L: (124.46, 227.33),
+        MountingHole.M: (281.94, 227.33),
+        MountingHole.X: (-5.08, 312.42),
+        MountingHole.Y: (124.46, 312.42),
+        MountingHole.Z: (281.94, 312.42),
+    }
+    assert set(holes) == set(expected)
+    for hole, (dx, dy) in expected.items():
+        assert rounded(holes[hole]) == (round(a[0] + dx, 2), round(a[1] + dy, 2)), hole
+    assert set(CEB.holes) == set(ATX.holes)
+
+
+def test_eeb_alternates_sit_where_figure_2_puts_them() -> None:
+    c = HOLE_POSITIONS_FROM_C
+    assert c[MountingHole.F_ALT] == (157.48, 0.0)
+    assert c[MountingHole.H_ALT] == pytest.approx((78.74 - 124.46, 177.8))
+    assert c[MountingHole.J_ALT] == (157.48, 181.61)
+    assert c[MountingHole.Y_ALT] == pytest.approx((78.74 - 124.46, 312.42))

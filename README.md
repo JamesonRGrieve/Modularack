@@ -14,14 +14,18 @@ I/O aperture, and the SFF-8301 (3.5 in) and SFF-8201 (2.5 in) drive dimensions.
 
 - **Chassis** (`RackChassis`): 10 in or 19 in, 1U to 4U, any depth. The front is a grid of
   12 columns by one row per U, filled with modules:
-  - `DriveBay(DRIVE_3_5)` / `DriveBay(DRIVE_2_5)`: tool-less hot-swap bays. Each row holds a
-    sled screwed to the drive's SFF side holes; it slides in grooves and clicks home on a
-    sprung detent.
+  - `DriveBay(drive)`: tool-less hot-swap bays for 3.5 in (`DRIVE_3_5`) and 2.5 in drives
+    (`DRIVE_2_5` 15 mm, `DRIVE_2_5_9_5MM`, `DRIVE_2_5_7MM`). Each sled is screwed to the
+    drive's SFF side holes, slides in grooves and clicks home on a sprung detent. A bay stacks
+    as many sleds per row as fit (two 7 mm drives in a 1U row), or `levels=` fixes it. Place
+    as many bays as the grid holds, mixed sizes, anywhere: a 19 in 1U takes three 3.5 in bays
+    or eight 7 mm 2.5 in drives.
   - `Vent` and `Blank` faces. Any cells left empty are closed with blanks automatically.
   - Modules can span several rows; each one stands on the floor or the shelf of the module
     below it.
-- **Motherboard**: Mini-ITX, microATX or ATX on printed standoff bosses at the Intel hole
-  positions, with the rear I/O aperture cut where the spec puts it. The chassis refuses a
+- **Motherboard**: Mini-ITX, microATX, ATX, SSI CEB or SSI EEB on printed standoff bosses at
+  the Intel / SSI hole positions (EEB alternates such as F' are added per board with
+  `alternate_holes=`), with the rear I/O aperture cut where the spec puts it. The chassis refuses a
   board that doesn't fit, or one that would collide with the front modules.
 - **Printed rack** (`PrintedRack`): posts with the EIA-310 hole pattern and captive M6 nuts,
   side panels, base and top. Two-post or four-post. Chassis also fit any bought EIA-310 rack;
@@ -92,6 +96,32 @@ For every reference design, the test suite and the build report check that:
 
 Representative parts (a wall segment, a sled, an ear, a rack post, a splice strip) slice
 cleanly in PrusaSlicer 2.9 with supports off.
+
+## Strength
+
+`uv run zephyrack-fea` checks the worst real mounting: a fully loaded chassis hanging from its
+two front ears in a two-post rack. Each ear is meshed with gmsh and solved in CalculiX, with
+stresses read in the ear's print frame, so tension and shear *across* the layers are reported
+separately from in-layer stress. The side walls, which carry the same moment in their own
+plane, are checked in closed form.
+
+The load is the printed parts as solid PLA, plus 750 g per 3.5 in drive, 150 g per 2.5 in
+drive, 2 kg of board and 2.5 kg of power supply. Material data is the Prusament PLA data sheet
+(v1.1, 2022): 51 MPa printed tensile strength, 17 MPa interlayer adhesion. Every reference
+chassis holds at least twice that load:
+
+| Chassis | Mass | Ear, in-layer | Ear, across layers | Ear deflection | Wall bending |
+|---|---|---|---|---|---|
+| 10 in 1U | 7.1 kg | 11.3 MPa (x4.5) | 4.2 MPa shear (x4.0) | 0.09 mm | x10 |
+| 19 in 1U | 11.2 kg | 21.5 MPa (x2.4) | 8.1 MPa shear (x2.1) | 0.18 mm | x5.2 |
+| 19 in 2U | 13.4 kg | 7.5 MPa (x6.8) | 3.1 MPa shear (x5.4) | 0.11 mm | x27 |
+| 19 in 4U | 19.3 kg | 3.9 MPa (x13) | 1.6 MPa shear (x11) | 0.07 mm | x91 |
+
+The analysis drove two design changes: the ears are 9 mm thick (at 6 mm the 19 in 1U ear
+reached 14.7 MPa interlayer shear around its top screw, x1.2), and wall seams are staggered
+against floor and cover seams so no seam cuts the whole box. FEA assumes solid, isotropic
+material; infill, perimeters and print quality move the real numbers, which the coupon prints
+below are for.
 
 ## Before you print a full set
 

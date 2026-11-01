@@ -7,20 +7,24 @@ import pytest
 from build123d import Vector
 
 from zephyrack.cassette import DriveBay, Vent
-from zephyrack.chassis import EAR_HOLES_PER_UNIT, RackChassis
+from zephyrack.chassis import EAR_HOLES_PER_UNIT, EAR_THICKNESS, SEAM_STAGGER, RackChassis
 from zephyrack.checks import check
-from zephyrack.plate import Plate, Slot
+from zephyrack.plate import Boss, Plate, Slot
 from zephyrack.rack import PrintedRack
 from zephyrack.reference import reference_builders
+from zephyrack.sled import Sled
 from zephyrack.standards import (
     ATX,
+    DRIVE_2_5_7MM,
     DRIVE_3_5,
+    EEB,
     MINI_ITX,
     PANEL_HEIGHT_DEDUCTION,
     RACK_10_INCH,
     RACK_19_INCH,
     RACK_UNIT,
     U_HOLE_OFFSETS,
+    MountingHole,
     panel_height,
 )
 
@@ -76,7 +80,7 @@ def test_a_module_can_span_several_rows() -> None:
     chassis.add_module(DriveBay(DRIVE_3_5, rows=2), 0, 0)
     chassis.add_module(Vent(rows=3), 4, 0, 6)
     chassis.build()
-    sleds = [c for c in chassis.descendants() if c.name.endswith(("_sled0", "_sled1"))]
+    sleds = [c for c in chassis.descendants() if isinstance(c, Sled)]
     assert len(sleds) == 2
     report = check(chassis)
     assert report.clean, report
@@ -99,4 +103,49 @@ def test_a_board_that_collides_with_the_front_modules_is_refused() -> None:
     chassis = RackChassis(RACK_19_INCH, 1, 300, ATX)
     chassis.add_module(DriveBay(DRIVE_3_5), 0, 0)
     with pytest.raises(ValueError, match="deeper"):
+        chassis.build()
+
+
+def test_an_eeb_board_with_alternates_fits_a_19_inch_chassis() -> None:
+    chassis = RackChassis(
+        RACK_19_INCH, 2, 540, EEB, alternate_holes=frozenset({MountingHole.F_ALT, MountingHole.J_ALT})
+    )
+    for column in (0, 4, 8):
+        chassis.add_module(DriveBay(DRIVE_3_5), column, 0)
+    chassis.build()
+    bosses = [f for p in chassis.descendants() if isinstance(p, Plate) for f in p.features if isinstance(f, Boss)]
+    assert len(bosses) == len(EEB.holes) + 2
+    report = check(chassis)
+    assert report.clean, report
+
+
+def test_alternates_are_refused_for_non_ssi_boards() -> None:
+    with pytest.raises(ValueError, match="SSI"):
+        RackChassis(RACK_19_INCH, 2, 470, ATX, alternate_holes=frozenset({MountingHole.F_ALT}))
+
+
+@pytest.mark.parametrize("name", ["chassis_19in_1U", "chassis_10in_2U"])
+def test_wall_seams_are_staggered_against_floor_and_cover_seams(name: str) -> None:
+    chassis = DESIGNS[name]()
+    assert isinstance(chassis, RackChassis)
+    box = chassis.floor.seams_u + chassis.cover.seams_u
+    walls = chassis.left_wall.seams_u + [chassis.depth - EAR_THICKNESS - s for s in chassis.right_wall.seams_u]
+    assert box and walls
+    assert all(abs(a - b) >= SEAM_STAGGER for a in box for b in walls)
+
+
+def test_thin_2_5_inch_drives_stack_two_sleds_to_a_1u_row() -> None:
+    chassis = RackChassis(RACK_19_INCH, 1, 470)
+    for column in (0, 3, 6, 9):
+        chassis.add_module(DriveBay(DRIVE_2_5_7MM), column, 0)
+    chassis.build()
+    assert len([c for c in chassis.descendants() if isinstance(c, Sled)]) == 8
+    report = check(chassis)
+    assert report.clean, report
+
+
+def test_asking_for_more_sled_levels_than_fit_is_refused() -> None:
+    chassis = RackChassis(RACK_19_INCH, 1, 470)
+    chassis.add_module(DriveBay(DRIVE_3_5, levels=2), 0, 0)
+    with pytest.raises(ValueError, match="don't fit"):
         chassis.build()

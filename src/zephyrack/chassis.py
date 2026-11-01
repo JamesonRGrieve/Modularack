@@ -24,7 +24,6 @@ from dataclasses import dataclass, field
 from build123d import Part, Vector
 
 from .cassette import (
-    FACE_THICKNESS,
     SHELF_THICKNESS,
     SIDE_THICKNESS,
     Blank,
@@ -40,6 +39,9 @@ from .layout import MK3S_BED, Bed, Panel
 from .plate import Boss, BossPocket, Edge, Frame, Plate, RectCut, Slot
 from .standards import (
     BOARD_THICKNESS,
+    CEB,
+    EEB,
+    EEB_ALTERNATE_HOLES,
     HOLE_C_TO_REAR_PANEL,
     HOLE_POSITIONS_FROM_C,
     IO_APERTURE_BELOW_BOARD_TOP,
@@ -61,7 +63,8 @@ MAX_UNITS = 4
 GRID_COLUMNS = 12
 WALL_THICKNESS = 9.0
 FLOOR_THICKNESS = 7.0
-EAR_THICKNESS = FACE_THICKNESS
+EAR_THICKNESS = 9.0
+"""Thicker than the 6 mm face plates: the ears take the overturning moment through their countersunk screws."""
 SIDE_CLEARANCE = 1.0
 """Gap between each side of the chassis and the rack posts."""
 EAR_HOLES_PER_UNIT = (0, 2)
@@ -69,6 +72,8 @@ EAR_HOLES_PER_UNIT = (0, 2)
 STANDOFF_BOSS_DIAMETER = 9.0
 BOARD_FRONT_CLEARANCE = 5.0
 """Space between the back of the deepest cassette and the front edge of the motherboard."""
+SEAM_STAGGER = 40.0
+"""Wall seams keep this far from floor and cover seams, so no seam plane cuts the whole box."""
 LAP_COUNT = 2
 LAP_MIN_SPACING = 20.0
 LAP_GROOVE_CLEARANCE = 4.5
@@ -91,9 +96,15 @@ class RackChassis(Component):
     depth: float
     motherboard: MotherboardFormFactor | None = None
     bed: Bed = MK3S_BED
+    alternate_holes: frozenset[MountingHole] = frozenset()
+    """SSI EEB/CEB alternate locations (F', H', ...) the chosen board uses, added to its legacy holes."""
     placements: list[Placement] = field(default_factory=list)
 
     def __post_init__(self) -> None:
+        if not self.alternate_holes <= EEB_ALTERNATE_HOLES:
+            raise ValueError(f"Not SSI alternate locations: {sorted(self.alternate_holes - EEB_ALTERNATE_HOLES)}")
+        if self.alternate_holes and self.motherboard not in (EEB, CEB):
+            raise ValueError("Alternate mounting locations are defined only for SSI EEB and CEB boards")
         if not MIN_UNITS <= self.units <= MAX_UNITS:
             raise ValueError(f"Zephyrack chassis are {MIN_UNITS}U-{MAX_UNITS}U, got {self.units}U")
         Component.__init__(self, f"chassis_{self.rack.name}_{self.units}U")
@@ -257,7 +268,7 @@ class RackChassis(Component):
         cx, cy = board.hole_c_from_corner
         return {
             hole: (rear_x - (cy + HOLE_POSITIONS_FROM_C[hole][1]), left_y - (cx + HOLE_POSITIONS_FROM_C[hole][0]))
-            for hole in sorted(board.holes)
+            for hole in sorted(board.holes | self.alternate_holes)
         }
 
     def _panels(
@@ -294,6 +305,10 @@ class RackChassis(Component):
             cover_keep_v,
             Vector(0, 0, 1),
         )
+        # Stagger wall seams against floor and cover seams so every seam is bridged by a continuous panel.
+        box_seams = self.floor.seams_u + self.cover.seams_u
+        left_keep = [(s - SEAM_STAGGER, s + SEAM_STAGGER) for s in box_seams]
+        right_keep = [(d - e - s - SEAM_STAGGER, d - e - s + SEAM_STAGGER) for s in box_seams]
         self.left_wall = Panel(
             f"{self.name}_left_wall",
             d - e,
@@ -301,6 +316,7 @@ class RackChassis(Component):
             t,
             Frame(Vector(e, w / 2, f), Vector(1, 0, 0), Vector(0, -1, 0)),
             self.bed,
+            left_keep,
             explode_direction=Vector(0, 1, 0),
         )
         self.right_wall = Panel(
@@ -310,6 +326,7 @@ class RackChassis(Component):
             t,
             Frame(Vector(d, -w / 2, f), Vector(-1, 0, 0), Vector(0, 1, 0)),
             self.bed,
+            right_keep,
             explode_direction=Vector(0, -1, 0),
         )
         self.rear_wall = Panel(
@@ -388,12 +405,19 @@ class RackChassis(Component):
                 hardware.items += edge_joint(above, plate, Edge.V1, _offset_stations(plate.length)).items
         return hardware
 
-    def _lap_z(self, *cassettes: Cassette) -> float:
-        """Lap screw height: above every sled groove on the shared face, inside the cassette."""
+    def _lap_z(self, *cassettes: Cassette) -> float | None:
+        """Lap screw height above every sled groove on the shared face, or None when grooves fill the face.
+
+        Bays stacked with several sled levels are grooved nearly to their top; they stay anchored by
+        their floor, shelf and cover joints instead.
+        """
         first = cassettes[0].slot
-        groove = max(c.kind.groove_top() for c in cassettes)
-        z = first.z_bottom + max(groove + LAP_GROOVE_CLEARANCE, first.row_height / 2)
-        return min(z, first.z_bottom + first.row_height - LAP_TOP_CLEARANCE)
+        groove = max(c.kind.groove_top(c.slot.row_height) for c in cassettes)
+        lowest = first.z_bottom + groove + LAP_GROOVE_CLEARANCE
+        highest = first.z_bottom + first.row_height - LAP_TOP_CLEARANCE
+        if lowest > highest:
+            return None
+        return min(max(lowest, first.z_bottom + first.row_height / 2), highest)
 
     def _place_laps(
         self,
@@ -435,31 +459,20 @@ class RackChassis(Component):
             record = cassette.slot
             x0, x1 = max(cassette.x_front, EAR_THICKNESS), cassette.x_back
             z = self._lap_z(cassette)
-            if record.column == 0:
+            if z is not None and record.column == 0:
                 hardware.items += self._place_laps(
-                    _wall_resolver(self.left_wall), cassette.left, cassette.slot.y_left, z, x0, x1, LapFastening.INSERT
+                    _wall_resolver(self.left_wall), cassette.left, record.y_left, z, x0, x1, LapFastening.INSERT
                 ).items
-            if record.column + record.columns == GRID_COLUMNS:
+            if z is not None and record.column + record.columns == GRID_COLUMNS:
                 hardware.items += self._place_laps(
-                    _wall_resolver(self.right_wall),
-                    cassette.right,
-                    cassette.slot.y_right,
-                    z,
-                    x0,
-                    x1,
-                    LapFastening.INSERT,
+                    _wall_resolver(self.right_wall), cassette.right, record.y_right, z, x0, x1, LapFastening.INSERT
                 ).items
             neighbour = cassettes.get((record.row, record.column + record.columns))
-            if neighbour is not None:
+            shared_z = None if neighbour is None else self._lap_z(cassette, neighbour)
+            if neighbour is not None and shared_z is not None:
                 lo, hi = max(x0, neighbour.x_front), min(x1, neighbour.x_back)
                 hardware.items += self._place_laps(
-                    _always(cassette.right),
-                    neighbour.left,
-                    cassette.slot.y_right,
-                    self._lap_z(cassette, neighbour),
-                    lo,
-                    hi,
-                    LapFastening.NUT,
+                    _always(cassette.right), neighbour.left, record.y_right, shared_z, lo, hi, LapFastening.NUT
                 ).items
         return hardware
 
