@@ -1,15 +1,17 @@
 # Zephyrack
 
 A modular rack system you can print on a 250 x 210 mm bed: 1U to 4U chassis for 10 in
-(micro) and 19 in (full-size) racks, hot-swap drive bays, motherboard mounts, and a fully
-printed rack frame to put them in. Every part prints without supports, and every connection
+(micro) and 19 in (full-size) racks, hot-swap drive bays, motherboard and power supply mounts,
+fan grilles, a fully printed rack frame to put them in, and adjustable rails and shelves for
+commercial servers in four-post racks. Every part prints without supports, and every connection
 between parts comes apart again: a screw you can undo, or for square-hole racks a hook or a
-spring catch.
+spring catch, and a cover that slides off without tools.
 
 Built in [build123d](https://github.com/gumyr/build123d). Every dimension is a parameter,
 and the published standards it builds against live in `src/zephyrack/standards.py` with
 their sources: EIA-310 rack holes, the Intel ATX / microATX / Mini-ITX mounting holes and
-I/O aperture, and the SFF-8301 (3.5 in) and SFF-8201 (2.5 in) drive dimensions.
+I/O aperture, the ATX12V power supply's rear face, the SFF-8301 (3.5 in) and SFF-8201 (2.5 in)
+drive dimensions, the SFF-8323 / SFF-8223 drive connector position, and fan screw spacings.
 
 ## What you can build
 
@@ -21,6 +23,12 @@ I/O aperture, and the SFF-8301 (3.5 in) and SFF-8201 (2.5 in) drive dimensions.
     as many sleds per row as fit (two 7 mm drives in a 1U row), or `levels=` fixes it. Place
     as many bays as the grid holds, mixed sizes, anywhere: a 19 in 1U takes three 3.5 in bays
     or eight 7 mm 2.5 in drives.
+  - `DriveBay(drive, pass_through=SataAdapter(...))`: a printed backplane. A cheap SATA 22-pin
+    male-to-female adapter sits behind each sled, where SFF-8323 / SFF-8223 put the drive's connector,
+    so a drive connects as it slides home; cables plug into the adapter from behind. Stops on the
+    backplane halt the sled at full mate, so the connector never takes the push. No seller publishes
+    the adapters' dimensions: `PLACEHOLDER_ADAPTER` is a guess, marked unmeasured, until you
+    measure yours.
   - `Vent` and `Blank` faces. Any cells left empty are closed with blanks automatically.
   - Modules can span several rows; each one stands on the floor or the shelf of the module
     below it.
@@ -28,6 +36,22 @@ I/O aperture, and the SFF-8301 (3.5 in) and SFF-8201 (2.5 in) drive dimensions.
   the Intel / SSI hole positions (EEB alternates such as F' are added per board with
   `alternate_holes=`), with the rear I/O aperture cut where the spec puts it. The chassis refuses a
   board that doesn't fit, or one that would collide with the front modules.
+- **Power supply** (`power_supply=True`): an ATX12V supply of any length up to 220 mm, screwed to the
+  rear wall through its four 6-32 holes, around an opening for its fan and inlet. Floor ribs guide
+  its body. It lies flat from 3U, or on its side in 4U beside an ATX board; the board moves against the
+  far wall to make room. The chassis refuses a supply that would reach the front modules.
+- **Fans** (`rear_fans=`, `cover_fans=`): honeycomb grilles with screw holes for 40, 50, 60, 70, 80,
+  92, 120, 140 and 200 mm fans, placed clear of seams and every other feature. `standards.FANS` gives
+  each screw spacing's source; the 40, 60, 80 and 92 mm spacings are the commonly cited ones, not yet
+  confirmed against a maker's drawing. `FanPlate(sizes)` packs
+  one or more fans of any mix of sizes onto a separate plate, as long as they fit the bed, for fans
+  too big for a panel segment.
+- **Tool-less cover** (`toolless_cover=True`): dovetail tabs along the cover's edges drop into windows
+  at the side walls' top edges, and the cover slides 12.5 mm forward into the grooves, which hold it
+  down and tie the walls together. A printed spring arm at the rear left corner snaps a tooth into the
+  wall. To open it, press the arm in, slide the cover back and lift. The rest of the box stays screwed:
+  every panel can only slide one way, and at a corner two panels would need to slide along different
+  edges.
 - **Mounting** (`ear_style=`, `one_piece=`, `knee_brace_units=`), for the worst case of a chassis
   hung from two front posts:
   - `EarStyle.SCREW`: slotted ears for M6 rack screws, in round, threaded or cage-nut holes.
@@ -47,6 +71,14 @@ I/O aperture, and the SFF-8301 (3.5 in) and SFF-8201 (2.5 in) drive dimensions.
   - `web_clamp=PostChannel(...)` (two-post channel racks): a jaw on each side wall grips the post's
     side web, tightened by an M5 thumbscrew into a captive nut. `PostChannel` defaults to a common
     3 in channel of 2.5 mm steel; measure your posts and pass their sizes.
+- **Server rails and shelves** (`ServerRails`): for commercial rack servers (a Dell R720 by default,
+  `ServerSpec` for others) in four-post square-hole racks such as APC's. A server fills the rack
+  opening, so each rail is an L outboard of it: a web between the posts and a ledge under the server's
+  edge. Segments butt end to end and are joined by pinned splice plates; a 10/9 mm vernier at the rear
+  joint sets any post spacing in the range (690 to 750 mm by default) to the millimetre, and end plates
+  peg into every square hole they span. `Sacrifice.UNIT` gives the rails the U below the server and
+  keeps its ears on the hole pattern; `Sacrifice.HOLE` raises the server about one square hole instead.
+  `shelf=True` hangs cross-beams and deck plates on the ledges.
 - **Printed rack** (`PrintedRack`): posts with the EIA-310 hole pattern and captive M6 nuts,
   side panels, base and top. Two-post or four-post. Chassis also fit any bought EIA-310 rack;
   their ear holes are slotted for the variation between brands (10 in racks have no formal
@@ -63,7 +95,9 @@ them, so the structure is arranged so the real loads run along the layers:
 
 | Part | On the bed | Main load | Direction in the print |
 |---|---|---|---|
-| Floor, cover, shelves | outer face | equipment weight, spanning between walls | bending in the plate: along the layers |
+| Floor, cover, shelves | outer face (a tool-less cover: inner face, so its dovetails rise from the bed) | equipment weight, spanning between walls | bending in the plate: along the layers |
+| Cover latch arm | in the cover's plane | bending as the tooth rides the wall (1.2 % strain) | along the layers |
+| Server rail segments, splice plates | outer face | the server's weight, bending the rail | along the layers |
 | Side and rear walls, module sides | outer face | weight carried to the ears; racking | in-plane: along the layers |
 | Screw ears, face plates, posts | front face | rack screws bearing on their holes | in-plane bearing: along the layers |
 | Square-hole ears, one-piece corners | the chassis's top edge (upright) | hooks and pegs pulling on and bearing in the post's holes | the post's face cuts across the layers: each hook's pull reaches the wall inside its own layer |
@@ -84,6 +118,10 @@ them, so the structure is arranged so the real loads run along the layers:
   modules slide over seams and the outside of the chassis stays flat.
 - Neighbouring modules are bolted together side by side (screw and captive nut), and the
   outer modules to the chassis walls.
+- *Interrupted dovetail* (the tool-less cover): short tabs whose 45 degree flank rises from a 1 mm flat
+  on the bed, in grooves whose lower sides slope at 45 degrees too, so they also print in a one-piece
+  corner standing upright. Tests sweep the cover through its motion: locked, it can't lift; slid back,
+  it lifts clear.
 
 Joint holes on both parts come from one point in the rack frame, so they line up by
 construction. A joint whose parts don't meet, or whose screw would hit another feature
@@ -172,6 +210,20 @@ and Elmer (`openeuler/elmer` container). All five give the same displacement (19
 8.206 MPa interlayer shear), and Elmer's nodal-averaged stresses to within 10 %. The design
 is judged on CalculiX's second-order (C3D10) solution.
 
+**Material and layer stiffness.** `--material petg` swaps in Prusament PETG (data sheet v1.1: 47 MPa
+printed tensile, 1.5 GPa, 18 MPa interlayer adhesion). The 19 in 1U screw ear goes from x3.1 / x2.4 to
+x2.9 / x2.6 (in-layer / across the layers, with interlayer shear and tension combined): slightly weaker
+in the layers, stronger across them. `--layer-modulus 0.6` makes the
+plastic orthotropic, 60 % as stiff across the layers as along them. That moves load off the interlayer
+and raises the same ear's across-layer factor from x2.4 to x2.7, so the isotropic result is the
+conservative one.
+
+**Server rails.** A Dell R720 (29.5 kg) on a pair of rails at their longest span, half its weight as a
+point load at mid-span (worse than its spread weight): bending x30, splice pins x6.0, sag 0.28 mm with
+`Sacrifice.UNIT`; bending x16, pins x3.5, sag 0.73 mm with `Sacrifice.HOLE`. A pair of rails carries
+88 kg at x2 (51 kg on `HOLE`). The shelf's beams carry 207 kg, so a shelf is limited by its rails' pins
+to 88 kg.
+
 The analysis drove two design changes: the ears are 9 mm thick (at 6 mm the 19 in 1U ear
 reached 14.7 MPa interlayer shear around its top screw, x1.2), and wall seams are staggered
 against floor and cover seams so no seam cuts the whole box.
@@ -209,6 +261,10 @@ Print coupons first: a short wall segment with two edge inserts, a splice strip 
 mating corners, one sled in its bay, and an ear against your rack. The clearances (sled
 groove, detent, insert bores, drive-screw recesses) are starting values; tune them in
 `cassette.py`, `sled.py` and `fasteners.py`.
+
+Measure before printing a backplane: the SATA pass-through adapter's body (width, height, and its
+depth with a drive fully mated), its male side's size, and where its receptacle sits on the body, then
+pass them as a `SataAdapter`. Measure your channel posts for a web clamp the same way.
 
 Hardware is M3 throughout (countersunk ISO 10642 screws, CNC Kitchen M3x5.7 and M3x3
 heat-set inserts, ISO 4032 nuts), M6 nuts in printed rack posts, and the drives' own
