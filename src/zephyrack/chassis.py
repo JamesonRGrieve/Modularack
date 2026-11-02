@@ -51,11 +51,12 @@ from .hooks import (
 )
 from .joints import EDGE_JOINT_END_MARGIN, Hardware, LapFastening, edge_joint, edge_positions, lap_joint
 from .layout import MK3S_BED, Bed, Panel
-from .plate import Boss, BossPocket, Edge, Frame, Plate, RectCut, Slot
+from .plate import Boss, BossPocket, Edge, Frame, Plate, RectCut, Rib, Slot, ThroughHole
 from .print_settings import SOLID
 from .rear import TONGUE_SPACING, RearArm, RearLayout, RearPin, pockets_for
 from .rear import TOP_MARGIN as REAR_TOP_MARGIN
 from .standards import (
+    ATX_PSU,
     BOARD_THICKNESS,
     CEB,
     EEB,
@@ -87,6 +88,13 @@ COVER_THICKNESS = FLOOR_THICKNESS
 """The cover sits between the full-height side walls, which screw into captive nuts in its edges."""
 COVER_RECESS = 1.0
 CORNER_RESERVE_MARGIN = 2.0
+PSU_MARGIN = 2.0
+"""Between the board (or the power supply's rib) and a side wall."""
+PSU_RIB = 4.0
+PSU_RIB_HEIGHT = 8.0
+PSU_CLEARANCE = 2.0
+PSU_OPENING_INSET = 12.0
+"""The rear wall's opening for the supply's fan and inlet stops this far inside its face, clear of the screws."""
 REAR_TONGUE_INSET = 30.0
 """The rear support's rear tongue sits this far in front of the chassis's back."""
 """The cover's top sits this far below the walls' top, so the walls' screws into it clear their top edge."""
@@ -106,6 +114,15 @@ LAP_MIN_SPACING = 20.0
 LAP_GROOVE_CLEARANCE = 4.5
 """Lap screws sit this far above the top of any sled groove, so their heads never meet a rail."""
 LAP_TOP_CLEARANCE = 5.0
+
+
+@dataclass(frozen=True)
+class PsuLayout:
+    y0: float
+    y1: float
+    """The power supply's sides (rack y)."""
+    height: float
+    on_side: bool
 
 
 @dataclass
@@ -145,6 +162,10 @@ class RackChassis(Component):
     depths (front posts' front face to rear posts' front face, mm). None: no rear support."""
     knee_brace_units: int | None = None
     web_clamp: PostChannel | None = None
+    power_supply: bool = False
+    """An ATX power supply bay at the rear wall (`standards.ATX_PSU`): its rear face screws to the wall, its
+    body (any length up to the spec's longest) rests between ribs on the floor beside the board, flat or on
+    its side, whichever fits. The board moves to the far side to make room."""
     rear_fans: tuple[int, ...] = ()
     """Fan grilles in the rear wall, by fan size (mm), placed clear of the I/O aperture and seams."""
     cover_fans: tuple[int, ...] = ()
@@ -246,6 +267,7 @@ class RackChassis(Component):
         # Joints are laid tightest-first: each later joint's stations slide clear of earlier ones.
         hardware.items += self._rear_corner_joints().items
         hardware.items += self._ears().items
+        self._psu_bay()
         self._place_fans(self.rear_wall, self.rear_fans, from_end=False)
         self._place_fans(self.cover, self.cover_fans, from_end=True)
         hardware.items += self._floor_cover_joints().items
@@ -321,7 +343,7 @@ class RackChassis(Component):
             return {}
         board = self.motherboard
         rear_x = self._board_rear_x()
-        left_y = board.width / 2
+        left_y = board.width / 2 + self._board_shift()
         cx, cy = board.hole_c_from_corner
         return {
             hole: (rear_x - (cy + HOLE_POSITIONS_FROM_C[hole][1]), left_y - (cx + HOLE_POSITIONS_FROM_C[hole][0]))
@@ -414,7 +436,7 @@ class RackChassis(Component):
         if self.motherboard is None:
             return None
         board = self.motherboard
-        near_y = board.width / 2 - board.hole_c_from_corner[0] - IO_APERTURE_OFFSET_FROM_C
+        near_y = board.width / 2 + self._board_shift() - board.hole_c_from_corner[0] - IO_APERTURE_OFFSET_FROM_C
         far_y = near_y - IO_APERTURE_WIDTH
         u0 = self.width / 2 - WALL_THICKNESS - near_y
         u1 = self.width / 2 - WALL_THICKNESS - far_y
@@ -425,7 +447,96 @@ class RackChassis(Component):
 
     def _aperture_keepout(self) -> list[tuple[float, float]]:
         span = self._aperture_span()
-        return [] if span is None else [(span[0] - 4, span[2] + 4)]
+        keep = [] if span is None else [(span[0] - 4, span[2] + 4)]
+        psu = self._psu_layout()
+        if psu is not None:
+            u0, u1 = self.width / 2 - WALL_THICKNESS - psu.y1, self.width / 2 - WALL_THICKNESS - psu.y0
+            keep.append((u0 - 4, u1 + 4))
+        return keep
+
+    # Power supply -------------------------------------------------------------------------------------
+
+    def _psu_layout(self) -> PsuLayout | None:
+        """Where the power supply sits: beside the board, at the left wall, flat if it fits, else on its side."""
+        if not self.power_supply:
+            return None
+        board = self.motherboard.width if self.motherboard is not None else 0.0
+        free = self.inner_width - board - 2 * PSU_MARGIN - PSU_RIB - PSU_CLEARANCE
+        spec = ATX_PSU
+        for across, tall, on_side in ((spec.width, spec.height, False), (spec.height, spec.width, True)):
+            if across <= free and tall + PSU_CLEARANCE <= self.inner_height:
+                y1 = self.inner_width / 2 - PSU_MARGIN - PSU_RIB
+                return PsuLayout(y1 - across, y1, tall, on_side)
+        raise ValueError(
+            f"{self.name}: no room for an ATX power supply: {free:.0f} mm beside the board and "
+            f"{self.inner_height:.0f} mm of height, against 150 x 86 (flat) or 86 x 150 (on its side)"
+        )
+
+    def _board_shift(self) -> float:
+        """With a power supply, the board moves against the right wall to leave the left side free."""
+        if not self.power_supply or self.motherboard is None:
+            return 0.0
+        return -(self.inner_width / 2 - PSU_MARGIN - self.motherboard.width / 2)
+
+    def _psu_bay(self) -> None:
+        psu = self._psu_layout()
+        if psu is None:
+            return
+        spec = ATX_PSU
+        reach = self.depth - WALL_THICKNESS - spec.lengths[1]
+        deepest = max((c.x_back for c in self.children.values() if isinstance(c, Cassette)), default=0.0)
+        if reach < deepest + SHELF_THICKNESS:
+            raise ValueError(f"{self.name}: a {spec.lengths[1]:.0f} mm power supply reaches the front modules")
+        inside = self.width / 2 - WALL_THICKNESS
+
+        def rear_uv(face_x: float, face_y: float) -> tuple[float, float]:
+            # Viewed from behind, the face's x runs toward +y; on its side the face turns a quarter.
+            x, y = (spec.height - face_y, face_x) if psu.on_side else (face_x, face_y)
+            return inside - (psu.y0 + x), y
+
+        for hx, hy in spec.holes:
+            u, v = rear_uv(hx, hy)
+            found = self.rear_wall.segment_at(u, v)
+            if found is None:
+                raise ValueError(f"{self.name}: a power supply screw lands on a rear wall seam")
+            plate, lu, lv = found
+            plate.add(ThroughHole(lu, lv, spec.screw_clearance))
+        # The opening for its fan and inlet, inside the screw holes.
+        corners = [
+            rear_uv(PSU_OPENING_INSET, PSU_OPENING_INSET + 6),
+            rear_uv(spec.width - PSU_OPENING_INSET, spec.height - PSU_OPENING_INSET),
+        ]
+        us, vs = sorted(c[0] for c in corners), sorted(c[1] for c in corners)
+        found = self.rear_wall.segment_at((us[0] + us[1]) / 2, (vs[0] + vs[1]) / 2)
+        assert found is not None
+        plate, lu, lv = found
+        du, dv = (us[1] - us[0]) / 2, (vs[1] - vs[0]) / 2
+        plate.add(RectCut(lu - du, lv - dv, lu + du, lv + dv))
+        # Guide ribs on the floor along each side of the longest body, split around any floor seams.
+        x0, x1 = self.depth - WALL_THICKNESS - spec.lengths[1], self.depth - WALL_THICKNESS
+        for ya, yb in (
+            (psu.y0 - PSU_CLEARANCE / 2 - PSU_RIB, psu.y0 - PSU_CLEARANCE / 2),
+            (psu.y1 + PSU_CLEARANCE / 2, psu.y1 + PSU_CLEARANCE / 2 + PSU_RIB),
+        ):
+            self._floor_rib(x0, x1, ya, yb)
+
+    def _floor_rib(self, x0: float, x1: float, y0: float, y1: float) -> None:
+        floor = self.floor
+        u0, u1 = x0 - EAR_THICKNESS, x1 - EAR_THICKNESS
+        v0, v1 = y0 + self.width / 2, y1 + self.width / 2
+        zone = floor.splice.zone
+        for (i, j), plate in floor.segments.items():
+            pu0, pu1 = floor.u_bounds[i], floor.u_bounds[i + 1]
+            pv0, pv1 = floor.v_bounds[j], floor.v_bounds[j + 1]
+            a = max(u0, pu0 + (zone if i > 0 else 0.0))
+            b = min(u1, pu1 - (zone if i < len(floor.u_bounds) - 2 else 0.0))
+            if (
+                a >= b
+                or v1 <= pv0 + (zone if j > 0 else 0.0)
+                or v0 >= pv1 - (zone if j < len(floor.v_bounds) - 2 else 0.0)
+            ):
+                continue
+            plate.add(Rib(a - pu0, v0 - pv0, b - pu0, v1 - pv0, PSU_RIB_HEIGHT))
 
     def _cut_aperture(self) -> None:
         span = self._aperture_span()

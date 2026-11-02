@@ -333,3 +333,30 @@ FANS: dict[int, FanSize] = {
     140: FanSize(140.0, (124.5,), 0.5, "Noctua (square-frame 140 mm, e.g. NF-A14)"),
     200: FanSize(200.0, (154.0, 170.0), 0.5, "Noctua NF-A20 page and datasheet; no industry standard"),
 }
+
+
+@dataclass(frozen=True)
+class PowerSupplySpec:
+    """A power supply's rear face: outline and screw holes, viewed from behind (x right, y up, from the
+    face's bottom-left corner)."""
+
+    name: str
+    width: float
+    height: float
+    holes: tuple[tuple[float, float], ...]
+    screw_clearance: float
+    lengths: tuple[float, float]
+    """Shortest and longest bodies the bay takes."""
+
+
+ATX_PSU = PowerSupplySpec(
+    "ATX12V",
+    150.0,
+    86.0,
+    ((6.0, 16.0), (6.0, 80.0), (144.0, 80.0), (120.0, 6.0)),
+    3.66,
+    (140.0, 220.0),
+)
+"""ATX12V Power Supply Design Guide v2.2, Figure 9: 150 x 86 rear face, four No. 6-32 UNC-2B threaded holes
+(6 / 16 and 6 / 80 from the left, 144 / 80 and 120 / 6 from the right-hand side's bottom), a 140 mm body; the
+bay also takes the longer bodies common today, to 220 mm."""

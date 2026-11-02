@@ -94,6 +94,16 @@ def chassis_19_inch_web_clamped() -> RackChassis:
     return chassis
 
 
+def chassis_19_inch_powered(units: int = 3) -> RackChassis:
+    """A server chassis: Mini-ITX board, ATX power supply (flat from 3U, on its side in 4U with an ATX
+    board), a row of 3.5 in bays and a 60 mm rear fan."""
+    chassis = RackChassis(RACK_19_INCH, units, DEPTH_19_INCH, MINI_ITX, power_supply=True, rear_fans=(60,))
+    for column in COLUMNS_3_5_19_INCH:
+        chassis.add_module(DriveBay(DRIVE_3_5), column, 0)
+    chassis.build()
+    return chassis
+
+
 def printed_rack_10_inch() -> PrintedRack:
     return PrintedRack(RACK_10_INCH, RACK_10_INCH_UNITS, RACK_10_INCH_DEPTH)
 
@@ -118,6 +128,7 @@ def reference_builders() -> dict[str, Callable[[], Component]]:
     builders["chassis_10in_2U_screw_braced"] = partial(chassis_10_inch, 2, EarStyle.SCREW, True, 1)
     builders["chassis_19in_1U_snap_rear"] = chassis_19_inch_rear_supported
     builders["chassis_19in_1U_hook_web"] = chassis_19_inch_web_clamped
+    builders["chassis_19in_3U_psu"] = chassis_19_inch_powered
     builders["rails_r720"] = ServerRails
     builders["rails_r720_hole"] = partial(ServerRails, sacrifice=Sacrifice.HOLE)
     builders["shelf_19in"] = partial(ServerRails, shelf=True)

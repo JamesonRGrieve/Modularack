@@ -270,6 +270,24 @@ class TopPocket(Feature):
 
 
 @dataclass
+class Rib(Feature):
+    """A box standing on the top face (a guide or a stop)."""
+
+    u0: float
+    v0: float
+    u1: float
+    v1: float
+    height: float
+    additive = True
+
+    def shape(self, plate: Plate) -> Part:
+        t = plate.thickness
+        return Pos((self.u0 + self.u1) / 2, (self.v0 + self.v1) / 2, t + self.height / 2 - 0.5) * Box(
+            self.u1 - self.u0, self.v1 - self.v0, self.height + 1
+        )
+
+
+@dataclass
 class BossPocket(Feature):
     """An insert bore down from the top of a boss standing `boss_height` above the top face."""
 
