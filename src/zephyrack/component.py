@@ -30,6 +30,8 @@ class Component(ABC):
         """Screws, inserts and nuts this assembly consumes (filled in by assemblies that build joints)."""
         self.print_settings: PrintSettings = STRUCTURAL
         """The slicer settings this component's solids are verified at."""
+        self.print_location = Location()
+        """Takes this component's solids from their own frame to their print orientation (+Z up)."""
 
     @abstractmethod
     def solids(self) -> dict[str, Part]:
@@ -53,7 +55,11 @@ class Component(ABC):
             placed = solid.located(location)
             placed.label = self.name if key in ("plate", "part") else f"{self.name}.{key}"
             shapes.append(placed)
-        shapes += [child.assemble(explode_distance).moved(location) for child in self.children.values()]
+        for child in self.children.values():
+            assembled = child.assemble(explode_distance)
+            # A plate printed as part of another (Plate.merge) has nothing of its own to place.
+            if assembled.children:
+                shapes.append(assembled.moved(location))
         compound = Compound(children=shapes)
         compound.label = self.name
         return compound
@@ -72,7 +78,7 @@ class Component(ABC):
                 path = component.name if key in ("plate", "part") else f"{component.name}.{key}"
                 if path in parts:
                     raise ValueError(f"Two printable parts are both named {path!r}")
-                parts[path] = solid
+                parts[path] = solid.moved(component.print_location)
         return parts
 
     def part_print_settings(self) -> dict[str, PrintSettings]:

@@ -3,8 +3,9 @@
 
 Structure and load path:
 
-- The floor and cover are panels; side walls and the rear wall stand on the floor and
-  carry the cover, joined by edge joints (inserts in the walls' edges).
+- The floor and cover are panels. The side walls and the rear wall stand on the floor; the side
+  walls run up to the chassis's top, the cover sits between them on the rear wall. Edge joints
+  (inserts in an edge) join them: floor into the walls' bottom edges, walls into the cover's edges.
 - Rack ears bolt to the side walls' front edges. Chassis weight goes floor -> wall
   inserts -> wall -> ear -> rack screws, along the layers of every part on the way.
 - The front is a grid (12 columns by one row per U) filled with cassettes. Every cassette
@@ -20,6 +21,7 @@ import math
 from collections import Counter
 from collections.abc import Callable
 from dataclasses import dataclass, field
+from enum import StrEnum
 
 from build123d import Part, Vector
 
@@ -34,6 +36,16 @@ from .cassette import (
 )
 from .component import Component
 from .fasteners import INSERT_M3_LONG, RACK_SCREW_CLEARANCE
+from .hooks import (
+    HOOK_HOLES_PER_UNIT,
+    UPRIGHT,
+    RackHook,
+    RackPeg,
+    SpringHook,
+    SpringHookCut,
+    hook_width,
+    spring_housing_depth,
+)
 from .joints import EDGE_JOINT_END_MARGIN, Hardware, LapFastening, edge_joint, edge_positions, lap_joint
 from .layout import MK3S_BED, Bed, Panel
 from .plate import Boss, BossPocket, Edge, Frame, Plate, RectCut, Slot
@@ -64,6 +76,11 @@ MAX_UNITS = 4
 GRID_COLUMNS = 12
 WALL_THICKNESS = 9.0
 FLOOR_THICKNESS = 7.0
+COVER_THICKNESS = FLOOR_THICKNESS
+"""The cover sits between the full-height side walls, which screw into captive nuts in its edges."""
+COVER_RECESS = 1.0
+CORNER_RESERVE_MARGIN = 2.0
+"""The cover's top sits this far below the walls' top, so the walls' screws into it clear their top edge."""
 EAR_THICKNESS = 9.0
 """Thicker than the 6 mm face plates: the ears take the overturning moment through their countersunk screws."""
 SIDE_CLEARANCE = 1.0
@@ -90,6 +107,19 @@ class Placement:
     columns: int
 
 
+class EarStyle(StrEnum):
+    """How the chassis mounts in the rack."""
+
+    SCREW = "screw"
+    """Slotted ears for M6 rack screws: round, threaded or cage-nut holes."""
+    HOOK = "hook"
+    """Square-hole racks: rigid hooks, printed upright. Push in, drop HOOK_TRAVEL and the hooks seat;
+    taking the chassis out needs that much free space above it."""
+    SNAP = "snap"
+    """Square-hole racks, push straight in: pegs carry the weight and a spring hook in the top U's top
+    hole snaps sideways behind the flange; push it inboard to release. Works in a full rack."""
+
+
 @dataclass
 class RackChassis(Component):
     rack: RackStandard
@@ -99,6 +129,9 @@ class RackChassis(Component):
     bed: Bed = MK3S_BED
     alternate_holes: frozenset[MountingHole] = frozenset()
     """SSI EEB/CEB alternate locations (F', H', ...) the chosen board uses, added to its legacy holes."""
+    ear_style: EarStyle = EarStyle.SCREW
+    one_piece: bool = False
+    """Print each ear and the front segment of its side wall as one upright piece, with no joint between them."""
     placements: list[Placement] = field(default_factory=list)
 
     def __post_init__(self) -> None:
@@ -112,7 +145,7 @@ class RackChassis(Component):
         self.width = self.rack.opening - 2 * SIDE_CLEARANCE
         self.height = panel_height(self.units)
         self.inner_width = self.width - 2 * WALL_THICKNESS
-        self.inner_height = self.height - 2 * FLOOR_THICKNESS
+        self.inner_height = self.height - FLOOR_THICKNESS - COVER_THICKNESS - COVER_RECESS
         self.cell_width = self.inner_width / GRID_COLUMNS
         self.row_height = (self.inner_height - (self.units - 1) * SHELF_THICKNESS) / self.units
         self.occupied = [[False] * GRID_COLUMNS for _ in range(self.units)]
@@ -283,7 +316,8 @@ class RackChassis(Component):
         floor_keep_v = [(y - SIDE_THICKNESS - 4 + w / 2, y + SIDE_THICKNESS + 4 + w / 2) for y in side_lines]
         floor_keep_v += [(y + w / 2 - boss, y + w / 2 + boss) for _, y in standoffs.values()]
         floor_keep_u = [(x - e - boss, x - e + boss) for x, _ in standoffs.values()]
-        cover_keep_v = [(w / 2 - y - SIDE_THICKNESS - 4, w / 2 - y + SIDE_THICKNESS + 4) for y in side_lines]
+        inside = w / 2 - t
+        cover_keep_v = [(inside - y - SIDE_THICKNESS - 4, inside - y + SIDE_THICKNESS + 4) for y in side_lines]
         self.floor = Panel(
             f"{self.name}_floor",
             d - e,
@@ -295,12 +329,14 @@ class RackChassis(Component):
             floor_keep_v,
             Vector(0, 0, -1),
         )
+        # The side walls run the chassis's full height, so a corner can print upright in one piece with
+        # its ear (one_piece); the cover sits between them.
         self.cover = Panel(
             f"{self.name}_cover",
             d - e,
-            w,
-            f,
-            Frame(Vector(e, w / 2, h), Vector(1, 0, 0), Vector(0, 0, -1)),
+            w - 2 * t,
+            COVER_THICKNESS,
+            Frame(Vector(e, inside, h - COVER_RECESS), Vector(1, 0, 0), Vector(0, 0, -1)),
             self.bed,
             [],
             cover_keep_v,
@@ -310,30 +346,36 @@ class RackChassis(Component):
         box_seams = self.floor.seams_u + self.cover.seams_u
         left_keep = [(s - SEAM_STAGGER, s + SEAM_STAGGER) for s in box_seams]
         right_keep = [(d - e - s - SEAM_STAGGER, d - e - s + SEAM_STAGGER) for s in box_seams]
+        # A one-piece corner prints its ear (and a spring hook's housing) in front of the wall's first segment.
+        reserve = 0.0
+        if self.one_piece:
+            reserve = e + (spring_housing_depth() if self.ear_style is EarStyle.SNAP else 0.0) + CORNER_RESERVE_MARGIN
         self.left_wall = Panel(
             f"{self.name}_left_wall",
             d - e,
-            h - 2 * f,
+            h - f,
             t,
             Frame(Vector(e, w / 2, f), Vector(1, 0, 0), Vector(0, -1, 0)),
             self.bed,
             left_keep,
             explode_direction=Vector(0, 1, 0),
+            reserve_start=reserve,
         )
         self.right_wall = Panel(
             f"{self.name}_right_wall",
             d - e,
-            h - 2 * f,
+            h - f,
             t,
             Frame(Vector(d, -w / 2, f), Vector(-1, 0, 0), Vector(0, 1, 0)),
             self.bed,
             right_keep,
             explode_direction=Vector(0, -1, 0),
+            reserve_end=reserve,
         )
         self.rear_wall = Panel(
             f"{self.name}_rear_wall",
             w - 2 * t,
-            h - 2 * f,
+            h - f - COVER_THICKNESS - COVER_RECESS,
             t,
             Frame(Vector(d, w / 2 - t, f), Vector(0, -1, 0), Vector(-1, 0, 0)),
             self.bed,
@@ -385,7 +427,12 @@ class RackChassis(Component):
             # An I/O aperture can take most of a narrow rear wall; its corners then carry the joint.
             minimum = 1 if wall is self.rear_wall and self.motherboard is not None else None
             hardware.items += edge_joint(self.floor, wall, Edge.V0, minimum=minimum).items
-            hardware.items += edge_joint(self.cover, wall, Edge.V1, minimum=minimum).items
+        # The cover sits on the rear wall and between the side walls, which screw into its edges.
+        hardware.items += edge_joint(self.cover, self.rear_wall, Edge.V1, minimum=1 if self.motherboard else None).items
+        # The cover is as thin as the floor (a 1U row must still take a 3.5 in sled): captive nuts, not inserts.
+        nut = LapFastening.NUT
+        hardware.items += edge_joint(self.left_wall, self.cover, Edge.V0, fastening=nut).items
+        hardware.items += edge_joint(self.right_wall, self.cover, Edge.V1, fastening=nut).items
         return hardware
 
     def _cassette_joints(self, cassettes: dict[tuple[int, int], Cassette]) -> Hardware:
@@ -492,12 +539,15 @@ class RackChassis(Component):
         p, w, t, e = self.rack.panel_width, self.width, WALL_THICKNESS, EAR_THICKNESS
         ear_length = p / 2 - (w / 2 - t)
         hole_u = self.rack.hole_spacing / 2 - (w / 2 - t)
-        heights = [
-            u * RACK_UNIT + offset - PANEL_HEIGHT_DEDUCTION / 2
+        # Square-hole ears and one-piece corners print upright (see hooks), screw ears flat.
+        upright = self.ear_style is not EarStyle.SCREW or self.one_piece
+        holes = [
+            (u, index, u * RACK_UNIT + offset - PANEL_HEIGHT_DEDUCTION / 2)
             for u in range(self.units)
             for index, offset in enumerate(U_HOLE_OFFSETS)
-            if index in EAR_HOLES_PER_UNIT
         ]
+        # The spring hook stands on the bed at the chassis's top edge: the top U's top hole.
+        spring_hole = (self.units - 1, len(U_HOLE_OFFSETS) - 1)
         for side, origin, wall, edge in (
             ("left", Vector(0, w / 2 - t, 0), self.left_wall, Edge.U0),
             ("right", Vector(0, -p / 2, 0), self.right_wall, Edge.U1),
@@ -509,15 +559,44 @@ class RackChassis(Component):
                 e,
                 Frame(origin, Vector(0, 1, 0), Vector(1, 0, 0)),
                 Vector(-1, 0, 0),
+                print_up=UPRIGHT if upright else None,
             )
             # Printed with sparse infill the ears fall below twice their two-post load (fea, infill).
             ear.print_settings = SOLID
             u = hole_u if side == "left" else ear_length - hole_u
-            for z in heights:
-                ear.add(Slot(u, z, RACK_SCREW_CLEARANCE, 2 * self.rack.hole_spacing_tolerance))
+            out = 1.0 if side == "left" else -1.0
+            half = hook_width(self.rack) / 2
+            band = (u - half, u + half)
+            for unit, index, z in holes:
+                match self.ear_style:
+                    case EarStyle.SNAP if (unit, index) == spring_hole:
+                        ear.add(SpringHook(band, z, out))
+                        ear.add(SpringHookCut(band, z, out))
+                    case EarStyle.SNAP:
+                        ear.add(RackPeg(band, z))
+                    case EarStyle.HOOK if index in HOOK_HOLES_PER_UNIT:
+                        ear.add(RackHook(band, z))
+                    case EarStyle.SCREW if index in EAR_HOLES_PER_UNIT:
+                        ear.add(Slot(u, z, RACK_SCREW_CLEARANCE, 2 * self.rack.hole_spacing_tolerance))
             self.add_child(ear)
-            hardware.items += edge_joint(ear, wall, edge).items
+            if self.one_piece:
+                self._merge_corner(ear, wall, edge)
+            else:
+                hardware.items += edge_joint(ear, wall, edge).items
         return hardware
+
+    def _merge_corner(self, ear: Plate, wall: Panel, edge: Edge) -> None:
+        """Print the ear and the front segment of its side wall as one upright piece: no joint between them."""
+        columns = sorted({i for i, _ in wall.segments})
+        front = columns[0] if edge is Edge.U0 else columns[-1]
+        segments = [plate for (i, _), plate in wall.segments.items() if i == front]
+        if len(segments) != 1:
+            raise ValueError(f"{wall.name} is split in height, so its ear can't print as one piece with it")
+        segment = segments[0]
+        up = segment.frame.direction_to_local(Vector(0, 0, -1))
+        segment.set_print_up(up)
+        segment.merge(ear)
+        segment.print_settings = SOLID
 
 
 def _offset_stations(span: float) -> list[float]:

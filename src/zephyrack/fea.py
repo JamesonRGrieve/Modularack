@@ -22,7 +22,9 @@ import os
 import subprocess
 import sys
 import tempfile
-from dataclasses import dataclass
+from collections import Counter
+from dataclasses import dataclass, field
+from enum import StrEnum
 from pathlib import Path
 
 import numpy as np
@@ -31,12 +33,25 @@ from skfem import Basis, ElementTetP1, ElementVector, MeshTet1, asm, condense, s
 from skfem.models.elasticity import lame_parameters, linear_elasticity
 
 from .chassis import FLOOR_THICKNESS, WALL_THICKNESS, RackChassis
+from .hooks import (
+    FLANGE_GAP,
+    HOOK_DROP,
+    SPRING_BODY_WIDTH,
+    SPRING_LIP_DEPTH,
+    SQUARE_HOLE,
+    RackHook,
+    RackPeg,
+    SpringHook,
+    hook_back,
+    peg_back,
+    spring_catch,
+)
 from .infill import EMPTY_CORE, split, voigt_core, wall_section_modulus
 from .plate import Plate, Slot, ThroughHole
 from .print_settings import PrintSettings
 from .reference import reference_builders
 from .sled import Sled
-from .standards import DRIVE_3_5
+from .standards import DRIVE_3_5, POST_INNER_EDGE_TO_HOLE
 
 logger = logging.getLogger(__name__)
 
@@ -191,6 +206,11 @@ def _mesh_regions(shell: Part, core: Part, work: Path) -> tuple[dict[int, Vector
     return nodes, elements, frozenset(k for k, v in enumerate(volumes) if v in core_tags)
 
 
+DECK_FORMAT = ".10g"
+"""CalculiX reads numbers from 20-character fields: full-precision floats like -5.349609493123235e-05
+overflow them and the card is rejected."""
+
+
 def _write_deck(
     path: Path,
     nodes: dict[int, tuple[float, float, float]],
@@ -200,13 +220,15 @@ def _write_deck(
     forces: dict[int, tuple[float, float, float]],
     core: frozenset[int] = frozenset(),
     core_fraction: float = 1.0,
+    partial: list[tuple[int, int]] | None = None,
 ) -> None:
-    lines = ["*NODE"] + [f"{n},{x},{y},{z}" for n, (x, y, z) in nodes.items()]
+    lines = ["*NODE"] + [f"{n},{x:{DECK_FORMAT}},{y:{DECK_FORMAT}},{z:{DECK_FORMAT}}" for n, (x, y, z) in nodes.items()]
     lines += ["*NSET, NSET=NALL"] + [str(n) for n in nodes]
     lines.append(f"*ELEMENT, TYPE={kind}, ELSET=EALL")
     lines += [f"{k + 1}," + ",".join(str(n) for n in e) for k, e in enumerate(elements)]
     lines += ["*ELSET, ELSET=SHELL"] + [str(k + 1) for k in range(len(elements)) if k not in core]
-    lines += ["*NSET, NSET=FIXED"] + [str(n) for n in fixed]
+    if fixed:
+        lines += ["*NSET, NSET=FIXED"] + [str(n) for n in fixed]
     lines += ["*MATERIAL, NAME=PLA", "*ELASTIC", f"{PLA.modulus},{PLA.poisson}"]
     lines += ["*SOLID SECTION, ELSET=SHELL, MATERIAL=PLA"]
     if core:
@@ -217,11 +239,12 @@ def _write_deck(
         "*STEP",
         "*STATIC",
         "*BOUNDARY",
-        "FIXED,1,3,0.0",
+        *(["FIXED,1,3,0.0"] if fixed else []),
+        *(f"{node},{dof},{dof},0.0" for node, dof in partial or []),
         "*CLOAD",
     ]
     for node, vector in forces.items():
-        lines += [f"{node},{dof + 1},{value}" for dof, value in enumerate(vector) if value]
+        lines += [f"{node},{dof + 1},{value:{DECK_FORMAT}}" for dof, value in enumerate(vector) if value]
     lines += ["*NODE PRINT, NSET=NALL", "U", "*EL PRINT, ELSET=EALL", "S", "*END STEP"]
     path.write_text("\n".join(lines) + "\n")
 
@@ -265,9 +288,15 @@ def von_mises(s: tuple[float, ...]) -> float:
 
 
 BEARING_HALF_HEIGHT = 5.0
+POST_BEARING_HEIGHT = 5.0
+"""A hook ear's foot bears on the post's face over this height: the pivot of the overturning moment."""
 """The wall's front edge bears on the ear over this half-height around the pivot."""
 PEAK_PERCENTILE = 0.995
-"""Point loads and fixed nodes make single-point stress spikes; report the 99.5th percentile."""
+"""Fallback for stresses that can't be tied to elements (nodal output): the 99.5th percentile."""
+PEAK_VOLUME = 45.0
+"""mm^3. Point loads and fixed nodes make single-point stress spikes, so the peak reported is the stress
+exceeded over the most-stressed 45 mm^3 of plastic: about 0.5 % of a standalone ear, and unlike a
+percentile it doesn't drop as more lightly loaded part (a whole wall) joins the model."""
 
 
 def _percentile(values: list[float]) -> float:
@@ -292,6 +321,10 @@ class EarProblem:
     moment_nmm: float
     core: frozenset[int] = frozenset()
     """Elements of the sparse infill core (indices into `elements`); empty for a solid part."""
+    partial: list[tuple[int, int]] = field(default_factory=list)
+    """(node, dof) pairs held in one direction only (1-3 = u, v, w): bearing contacts."""
+    layer_axis: int = 2
+    """The plate-frame axis that points up in the print: w for a flat plate, u for an edge-printed one."""
 
     def corners(self) -> set[int]:
         return {n for e in self.elements for n in e[:4]}
@@ -329,19 +362,24 @@ def ear_problem(chassis: RackChassis, work: Path, settings: PrintSettings | None
     tensions = {key: moment * arm / second_moment for key, arm in arms.items()}
     core: frozenset[int] = frozenset()
     if settings is None:
-        export_step(ear.solids()["plate"], work / "part.step")
+        export_step(ear.body(), work / "part.step")
         nodes, elements, _ = _mesh(work / "part.step", work)
     else:
         nodes, elements, core = _mesh_regions(*split(ear, settings), work)
-    fixed = [
-        n
-        for n, (u, v, w) in nodes.items()
-        if any(
-            abs(v - s.v) <= s.diameter / 2 + 0.05 and abs(u - s.u) <= s.travel / 2 + s.diameter / 2 + 0.05
-            for s in slots
-        )
-        and 0 < w < ear.thickness
-    ]
+    t = ear.thickness
+    partial: list[tuple[int, int]] = []
+    if any(isinstance(f, RackHook | RackPeg | SpringHook) for f in ear.features):
+        fixed, partial = _hook_supports(ear, nodes)
+    else:
+        fixed = [
+            n
+            for n, (u, v, w) in nodes.items()
+            if any(
+                abs(v - s.v) <= s.diameter / 2 + 0.05 and abs(u - s.u) <= s.travel / 2 + s.diameter / 2 + 0.05
+                for s in slots
+            )
+            and 0 < w < t
+        ]
 
     def hole_wall(h: ThroughHole) -> list[int]:
         r = h.diameter / 2
@@ -364,7 +402,148 @@ def ear_problem(chassis: RackChassis, work: Path, settings: PrintSettings | None
         if abs(w - ear.thickness) < 0.05 and u <= WALL_THICKNESS and abs(v - bearing_v) <= BEARING_HALF_HEIGHT
     ]
     loads.append((bearing, (0.0, 0.0, -sum(tensions.values()))))
-    return EarProblem(nodes, elements, fixed, loads, load, moment, core)
+    layer_axis = _layer_axis(ear)
+    return EarProblem(nodes, elements, fixed, loads, load, moment, core, partial, layer_axis)
+
+
+def _layer_axis(plate: Plate) -> int:
+    """The plate-frame axis that points up (or down) in its print: w for a flat plate."""
+    if plate.print_up is None:
+        return 2
+    return 0 if abs(plate.print_up.X) > abs(plate.print_up.Y) else 1
+
+
+class Brace(StrEnum):
+    """Idealised braces for ranking concepts: each adds the support its brace would give."""
+
+    NONE = "none"
+    FLANGE_BAR = "flange bar"
+    """A rigid bar behind the post's flange holds every peg's and hook's tail back (rearward support)."""
+    KNEE = "knee"
+    """A strut from the post props the wall's bottom edge at KNEE_DEPTH of the corner's wall (upward support)."""
+
+
+KNEE_DEPTH = 0.8
+"""Where the knee brace meets the wall, as a fraction of the corner's wall length."""
+BRACE_PATCH = 5.0
+
+
+def corner_problem(chassis: RackChassis, work: Path, brace: Brace = Brace.NONE) -> EarProblem:
+    """The left one-piece corner (ear and front wall segment, printed as one) hung from its post.
+
+    The rest of the chassis is a rigid lever: at the corner's cut (its splice to the next wall segment)
+    it applies half the chassis's weight as shear, plus the couple that brings the moment at the post up
+    to that of the whole chassis hung there. Meshed in the ear's frame, so the post supports are the ear's.
+    """
+    ear = chassis.children[f"{chassis.name}_left_ear"]
+    assert isinstance(ear, Plate) and ear.merged_into is not None
+    segment = ear.merged_into
+    load = chassis_mass(chassis) * GRAVITY / 2
+    moment = load * chassis.depth / 2
+    part = segment.solids()["plate"].moved(ear.placement.inverse() * segment.placement)
+    export_step(part, work / "part.step")
+    nodes, elements, _ = _mesh(work / "part.step", work)
+    if any(isinstance(f, RackHook | RackPeg | SpringHook) for f in ear.features):
+        fixed, partial = _hook_supports(ear, nodes)
+    else:
+        slots = [f for f in ear.features if isinstance(f, Slot)]
+        fixed = [
+            n
+            for n, (u, v, w) in nodes.items()
+            if any(
+                abs(v - s.v) <= s.diameter / 2 + 0.05 and abs(u - s.u) <= s.travel / 2 + s.diameter / 2 + 0.05
+                for s in slots
+            )
+            and 0 < w < ear.thickness
+        ]
+        partial = []
+    if brace is Brace.FLANGE_BAR:
+        tails = [_tail(f, ear) for f in ear.features if isinstance(f, RackHook | RackPeg | SpringHook)]
+        partial += [
+            (n, 3)
+            for n, (u, v, w) in nodes.items()
+            for (u0, u1), back in tails
+            if u0 - 0.05 <= u <= u1 + 0.05 and abs(w - back) < 0.05
+        ]
+    elif brace is Brace.KNEE:
+        prop_w = ear.thickness + KNEE_DEPTH * segment.length
+        partial += [
+            (n, 2)
+            for n, (u, v, w) in nodes.items()
+            if abs(v - FLOOR_THICKNESS) < 0.05
+            and abs(w - prop_w) <= BRACE_PATCH
+            and -0.05 <= u <= WALL_THICKNESS + 0.05
+        ]
+    # The cut face: the segment's rear end, across the wall's thickness (u in [0, WALL_THICKNESS] here).
+    cut_w = ear.thickness + segment.length
+    face = [n for n, (u, v, w) in nodes.items() if abs(w - cut_w) < 0.05 and -0.05 <= u <= WALL_THICKNESS + 0.05]
+    if not face:
+        raise RuntimeError("No nodes on the corner's cut face")
+    heights = [nodes[n][1] for n in face]
+    centre = sum(heights) / len(heights)
+    second = sum((h - centre) ** 2 for h in heights)
+    couple = moment - load * segment.length
+    loads: list[tuple[list[int], Vector3]] = [(face, (0.0, -load, 0.0))]
+    # The couple as a linear spread of force along w over the cut face (like bending stress): top in
+    # tension pulling rearward, bottom pushing forward.
+    for n in face:
+        loads.append(([n], (0.0, 0.0, couple * (nodes[n][1] - centre) / second)))
+    return EarProblem(nodes, elements, fixed, loads, load, moment, frozenset(), partial, _layer_axis(segment))
+
+
+def _tail(feature: RackHook | RackPeg | SpringHook, ear: Plate) -> tuple[tuple[float, float], float]:
+    """A mount's hook column and the w of its back face, where a flange bar would hold it."""
+    if isinstance(feature, SpringHook):
+        lo, hi = sorted(spring_catch(feature, ear))
+        return (lo - SPRING_BODY_WIDTH, hi), ear.thickness + FLANGE_GAP + SPRING_LIP_DEPTH
+    if isinstance(feature, RackHook):
+        return feature.band, hook_back(ear)
+    return feature.band, peg_back(ear)
+
+
+def analyse_corner(name: str, chassis: RackChassis, brace: Brace = Brace.NONE) -> EarResult:
+    with tempfile.TemporaryDirectory() as directory:
+        work = Path(directory)
+        problem = corner_problem(chassis, work, brace)
+        return _summarise(name, problem, *solve_calculix(problem, work))
+
+
+def _hook_supports(ear: Plate, nodes: dict[int, Vector3]) -> tuple[list[int], list[tuple[int, int]]]:
+    """A square-hole ear hung from a post: each lip held against the back of the flange (rearward, and
+    sideways by friction), each weight-bearing hook or peg resting on its hole's bottom edge, and the
+    ear's foot bearing on the post's face (the pivot of the overturning moment)."""
+    t = ear.thickness
+    catch_w = t + FLANGE_GAP
+    tol = 0.05
+    fixed: list[int] = []
+    partial: list[tuple[int, int]] = []
+    centres: list[float] = []
+    for f in ear.features:
+        if isinstance(f, RackHook | RackPeg):
+            (u0, u1), edge = f.band, f.hole_v - SQUARE_HOLE / 2
+            centres.append((u0 + u1) / 2)
+            back = catch_w if isinstance(f, RackHook) else peg_back(ear)
+            for n, (u, v, w) in nodes.items():
+                if not u0 - tol <= u <= u1 + tol:
+                    continue
+                if abs(v - edge) < tol and t - tol <= w <= back + tol:
+                    # Resting on the hole's bottom edge, held sideways by its sides.
+                    partial += [(n, 1), (n, 2)]
+                elif isinstance(f, RackHook) and abs(w - catch_w) < tol and edge - HOOK_DROP - tol <= v <= edge + tol:
+                    partial += [(n, 1), (n, 3)]
+        elif isinstance(f, SpringHook):
+            # The lip's catch face, outboard of the block: held rearward only (the blades set it sideways).
+            lo, hi = sorted(spring_catch(f, ear))
+            v_lo = f.hole_v - SQUARE_HOLE / 2
+            for n, (u, v, w) in nodes.items():
+                if abs(w - catch_w) < tol and lo - tol <= u <= hi + tol and v >= v_lo - tol:
+                    partial.append((n, 3))
+    # The left ear's post lies outboard of its hole column's inner edge (larger u).
+    post_edge = centres[0] - POST_INNER_EDGE_TO_HOLE
+    partial += [
+        (n, 3) for n, (u, v, w) in nodes.items() if abs(w - t) < tol and v <= POST_BEARING_HEIGHT and u >= post_edge
+    ]
+    return fixed, partial
 
 
 def solve_calculix(problem: EarProblem, work: Path, second_order: bool = True) -> tuple[float, list[tuple[float, ...]]]:
@@ -376,7 +555,9 @@ def solve_calculix(problem: EarProblem, work: Path, second_order: bool = True) -
         nodes = {n: xyz for n, xyz in problem.nodes.items() if n in corners}
         elements, kind = [e[:4] for e in problem.elements], "C3D4"
     fixed = [n for n in problem.fixed if n in nodes]
-    _write_deck(work / "ear.inp", nodes, elements, kind, fixed, problem.nodal_forces(set(nodes)))
+    partial = [(n, dof) for n, dof in problem.partial if n in nodes]
+    forces = problem.nodal_forces(set(nodes))
+    _write_deck(work / "ear.inp", nodes, elements, kind, fixed, forces, partial=partial)
     subprocess.run([CCX, "-i", "ear"], cwd=work, check=True, capture_output=True, timeout=SOLVER_TIMEOUT)
     return _results(work / "ear.dat")
 
@@ -409,16 +590,62 @@ def solve_scikit_fem(problem: EarProblem) -> tuple[float, list[tuple[float, ...]
     return magnitude, [tuple(float(v) for v in row) for row in rows]
 
 
-def _summarise(name: str, problem: EarProblem, displacement: float, stresses: list[tuple[float, ...]]) -> EarResult:
+LAYER_SHEARS = {0: (3, 4), 1: (3, 5), 2: (4, 5)}
+"""Stress components (xx, yy, zz, xy, xz, yz) of the two shears acting on a plane normal to each axis."""
+
+
+def _summarise(
+    name: str,
+    problem: EarProblem,
+    displacement: float,
+    stresses: list[tuple[float, ...]],
+    owners: list[int] | None = None,
+) -> EarResult:
+    """Peak stresses of a solution. `owners` gives each stress's element; without it, stresses are taken
+    as element-major integration points of every element, or (if they don't divide evenly) as nodal values."""
+    axis = problem.layer_axis
+    a, b = LAYER_SHEARS[axis]
+    weights = _point_volumes(problem, len(stresses), owners)
+
+    def peak(values: list[float]) -> float:
+        return _percentile(values) if weights is None else _peak(values, weights)
+
     return EarResult(
         design=name,
         load_n=problem.load_n,
         moment_nmm=problem.moment_nmm,
         max_displacement=displacement,
-        in_layer=_percentile([von_mises(s) for s in stresses]),
-        across_layer_tension=_percentile([max(0.0, s[2]) for s in stresses]),
-        interlayer_shear=_percentile([math.hypot(s[4], s[5]) for s in stresses]),
+        in_layer=peak([von_mises(s) for s in stresses]),
+        across_layer_tension=peak([max(0.0, s[axis]) for s in stresses]),
+        interlayer_shear=peak([math.hypot(s[a], s[b]) for s in stresses]),
     )
+
+
+def _point_volumes(problem: EarProblem, count: int, owners: list[int] | None) -> list[float] | None:
+    """The volume each stress sample stands for: its element's, shared among the element's points."""
+    if owners is None:
+        if count % len(problem.elements):
+            return None
+        per = count // len(problem.elements)
+        owners = [k // per for k in range(count)]
+    points = Counter(owners)
+    volumes = {e: _tet_volume([problem.nodes[n] for n in problem.elements[e][:4]]) for e in points}
+    return [volumes[e] / points[e] for e in owners]
+
+
+def _tet_volume(corners: list[Vector3]) -> float:
+    a, b, c, d = (np.array(p) for p in corners)
+    return float(abs(np.dot(b - a, np.cross(c - a, d - a))) / 6)
+
+
+def _peak(values: list[float], weights: list[float]) -> float:
+    """The value exceeded over PEAK_VOLUME of material (or the smallest, if there is less than that)."""
+    covered = 0.0
+    for value, weight in sorted(zip(values, weights, strict=True), reverse=True):
+        covered += weight
+        if covered >= PEAK_VOLUME:
+            return value
+    return min(values)
 
 
 def analyse_ear(name: str, chassis: RackChassis) -> EarResult:
@@ -465,17 +692,28 @@ def analyse_printed_ear(
         fixed = list(problem.fixed)
         forces = problem.nodal_forces(set(problem.nodes))
         _write_deck(
-            work / "ear.inp", problem.nodes, problem.elements, "C3D10", fixed, forces, problem.core, core_fraction
+            work / "ear.inp",
+            problem.nodes,
+            problem.elements,
+            "C3D10",
+            fixed,
+            forces,
+            problem.core,
+            core_fraction,
+            problem.partial,
         )
         subprocess.run([CCX, "-i", "ear"], cwd=work, check=True, capture_output=True, timeout=SOLVER_TIMEOUT)
         displacement, stresses, owners = _element_results(work / "ear.dat")
-    shell = [s for s, e in zip(stresses, owners, strict=True) if e not in problem.core]
+    in_shell = [(s, e) for s, e in zip(stresses, owners, strict=True) if e not in problem.core]
     core: EarResult | None = None
     if core_fraction > EMPTY_CORE:
         density = settings.infill_density
-        scaled = [tuple(v / density for v in s) for s, e in zip(stresses, owners, strict=True) if e in problem.core]
-        core = _summarise(f"{name} core", problem, displacement, scaled)
-    return PrintedEarResult(settings, core_fraction, _summarise(name, problem, displacement, shell), core)
+        in_core = [
+            (tuple(v / density for v in s), e) for s, e in zip(stresses, owners, strict=True) if e in problem.core
+        ]
+        core = _summarise(f"{name} core", problem, displacement, [s for s, _ in in_core], [e for _, e in in_core])
+    shell = _summarise(name, problem, displacement, [s for s, _ in in_shell], [e for _, e in in_shell])
+    return PrintedEarResult(settings, core_fraction, shell, core)
 
 
 def printed_ear_bounds(name: str, chassis: RackChassis, settings: PrintSettings) -> list[PrintedEarResult]:
@@ -505,7 +743,7 @@ def wall_bending(name: str, chassis: RackChassis) -> WallResult:
     """
     load = chassis_mass(chassis) * GRAVITY / 2
     moment = load * chassis.depth / 2
-    height = chassis.height - 2 * FLOOR_THICKNESS
+    height = chassis.height - FLOOR_THICKNESS
     return WallResult(name, 6 * moment / (WALL_THICKNESS * height**2))
 
 
@@ -513,7 +751,7 @@ def printed_wall_bending(name: str, chassis: RackChassis, settings: PrintSetting
     """`wall_bending` with the wall as printed and its core taken as empty: skins and edge perimeters only."""
     load = chassis_mass(chassis) * GRAVITY / 2
     moment = load * chassis.depth / 2
-    height = chassis.height - 2 * FLOOR_THICKNESS
+    height = chassis.height - FLOOR_THICKNESS
     return WallResult(name, moment / wall_section_modulus(WALL_THICKNESS, height, settings, EMPTY_CORE))
 
 

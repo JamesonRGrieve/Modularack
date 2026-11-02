@@ -53,7 +53,7 @@ class SpliceSpec:
     thickness: float = 2.5
     clearance: float = 0.2
     screw_pitch: float = 35.0
-    end_margin: float = 11.0
+    end_margin: float = 10.2
     """Strip ends stop this far from the panel or segment edge, clear of edge-insert reliefs (9.7 deep)."""
     min_run: float = 7.0
     """Shortest strip that still seats one countersunk screw."""
@@ -148,6 +148,10 @@ class Panel(Component):
     keepouts_v: list[tuple[float, float]] = field(default_factory=list)
     explode_direction: Vector = field(default_factory=lambda: Vector(0, 0, 0))
     splice: SpliceSpec = SPLICE
+    reserve_start: float = 0.0
+    """Bed length the first segment (at u = 0) must leave free: something printed with it (a one-piece ear)."""
+    reserve_end: float = 0.0
+    """The same for the last segment (at u = length)."""
 
     def __post_init__(self) -> None:
         Component.__init__(self, self.name)
@@ -157,7 +161,13 @@ class Panel(Component):
             (portrait, landscape),
             key=lambda m: math.ceil(self.length / m[0]) * math.ceil(self.width / m[1]),
         )
-        self.seams_u = plan_seams(self.length, best[0], self.keepouts_u, self.splice.zone)
+        # Plan along u as if the reserves were part of the panel, and keep seams out of them.
+        start, end = self.reserve_start, self.reserve_end
+        total = self.length + start + end
+        keepouts_u = [(a + start, b + start) for a, b in self.keepouts_u]
+        keepouts_u += [(-1.0, start)] if start else []
+        keepouts_u += [(self.length + start, total + 1.0)] if end else []
+        self.seams_u = [seam - start for seam in plan_seams(total, best[0], keepouts_u, self.splice.zone)]
         self.seams_v = plan_seams(self.width, best[1], self.keepouts_v, self.splice.zone)
         self.u_bounds = [0.0, *self.seams_u, self.length]
         self.v_bounds = [0.0, *self.seams_v, self.width]

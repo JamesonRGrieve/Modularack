@@ -74,6 +74,10 @@ def main() -> None:
     stress.interpolate(fem.Expression(sigma(displacement), tensor_space.element.interpolation_points))
     s = stress.x.array.reshape(-1, 3, 3)
     rows = np.stack([s[:, 0, 0], s[:, 1, 1], s[:, 2, 2], s[:, 0, 1], s[:, 0, 2], s[:, 1, 2]], axis=-1)
+    # dolfinx reorders cells; report them in the input's order, so each stress pairs with its element.
+    ordered = np.empty_like(rows)
+    ordered[domain.topology.original_cell_index] = rows
+    rows = ordered
     with open(sys.argv[2], "w") as out:
         json.dump({"displacement": magnitude, "stresses": rows.tolist()}, out)
 

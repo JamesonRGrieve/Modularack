@@ -35,7 +35,7 @@ from .fasteners import (
     screw_length,
 )
 from .layout import Panel
-from .plate import Edge, EdgeInsert, Face, HexPocket, Plate, ThroughHole, TopPocket, feature_extent
+from .plate import Edge, EdgeInsert, EdgeNut, Face, HexPocket, Plate, ThroughHole, TopPocket, feature_extent
 
 CONTACT_TOLERANCE = 1e-3
 EDGE_JOINT_PITCH = 60.0
@@ -43,6 +43,14 @@ EDGE_JOINT_END_MARGIN = 7.0
 """Distance from a plate corner to the first insert, clear of the joints on the neighbouring edges."""
 HOLE_EDGE_MARGIN = M3_COUNTERSINK_DIAMETER / 2 + 1.0
 """Smallest distance from a screw hole centre to the edge of the plate it passes through."""
+
+
+EDGE_NUT_SLOT_DEPTH = 4.0
+"""From a thin plate's edge to its captive nut's near face."""
+EDGE_NUT_BORE_DEPTH = 10.0
+"""Room past the nut for the screw's tip."""
+EDGE_NUT_FLOOR = 0.6
+"""Plastic left under an edge nut's slot."""
 
 
 class LapFastening(StrEnum):
@@ -75,7 +83,9 @@ def _locate(surface: Surface, rack_point: Vector, margin: float) -> tuple[Plate,
     return plate, plate.frame.to_local(rack_point)
 
 
-def _edge_point(surface: Surface, edge: Edge, position: float) -> tuple[Plate, EdgeInsert, Vector, Vector] | None:
+def _edge_point(
+    surface: Surface, edge: Edge, position: float, nut: bool = False
+) -> tuple[Plate, EdgeInsert, Vector, Vector] | None:
     """B's plate holding the insert at `position` along the logical edge, the insert, its rack point and direction."""
     length, width = surface.length, surface.width
     match edge:
@@ -103,16 +113,22 @@ def _edge_point(surface: Surface, edge: Edge, position: float) -> tuple[Plate, E
     span = plate.width if edge in (Edge.U0, Edge.U1) else plate.length
     if not EDGE_JOINT_END_MARGIN <= along <= span - EDGE_JOINT_END_MARGIN:
         return None
-    if plate.thickness < EDGE_INSERT_MIN_THICKNESS:
-        raise ValueError(f"{plate.name} is {plate.thickness} mm; edge inserts need {EDGE_INSERT_MIN_THICKNESS:.1f}")
-    insert = EdgeInsert(
-        edge,
-        along,
-        EDGE_INSERT.bore_diameter,
-        EDGE_INSERT.length,
-        EDGE_INSERT.relief_diameter,
-        EDGE_INSERT_RELIEF_DEPTH,
-    )
+    insert: EdgeInsert
+    if nut:
+        if plate.thickness / 2 < EdgeNut.floor_offset() + EDGE_NUT_FLOOR:
+            raise ValueError(f"{plate.name} is {plate.thickness} mm, too thin for an edge nut")
+        insert = EdgeNut(edge, along, M3_CLEARANCE, EDGE_NUT_BORE_DEPTH, 0.0, 0.0, EDGE_NUT_SLOT_DEPTH)
+    else:
+        if plate.thickness < EDGE_INSERT_MIN_THICKNESS:
+            raise ValueError(f"{plate.name} is {plate.thickness} mm; edge inserts need {EDGE_INSERT_MIN_THICKNESS:.1f}")
+        insert = EdgeInsert(
+            edge,
+            along,
+            EDGE_INSERT.bore_diameter,
+            EDGE_INSERT.length,
+            EDGE_INSERT.relief_diameter,
+            EDGE_INSERT_RELIEF_DEPTH,
+        )
     start, direction = insert.start_and_direction(plate)
     return plate, insert, plate.frame.to_rack(start), plate.frame.direction_to_rack(direction)
 
@@ -130,10 +146,10 @@ def edge_positions(span: float, pitch: float = EDGE_JOINT_PITCH, margin: float =
 
 
 def _try_station(
-    a: Surface | list[Surface], b: Surface, edge: Edge, position: float
+    a: Surface | list[Surface], b: Surface, edge: Edge, position: float, nut: bool = False
 ) -> tuple[Plate, EdgeInsert, Plate, ThroughHole] | None:
     """The insert and hole for one station, or None if either would hit a seam, an edge or another feature."""
-    found = _edge_point(b, edge, position)
+    found = _edge_point(b, edge, position, nut)
     if found is None:
         return None
     b_plate, insert, rack_point, rack_direction = found
@@ -169,8 +185,9 @@ def edge_joint(
     edge: Edge,
     positions: Iterable[float] | None = None,
     minimum: int | None = None,
+    fastening: LapFastening = LapFastening.INSERT,
 ) -> Hardware:
-    """Screws through `a` into inserts in `b`'s `edge`.
+    """Screws through `a` into inserts in `b`'s `edge` (or captive nuts in T-slots, for thin plates).
 
     Each target station slides along the edge (up to half the spacing either way) to the
     nearest spot that clears seams, plate edges and existing features.
@@ -192,14 +209,19 @@ def edge_joint(
             position = target + offset
             if not 0 < position < span or any(abs(position - c) < EDGE_JOINT_MIN_SPACING for c in chosen):
                 continue
-            station = _try_station(a, b, edge, position)
+            station = _try_station(a, b, edge, position, fastening is LapFastening.NUT)
             if station is None:
                 continue
             b_plate, insert, a_plate, hole = station
             a_plate.add(hole)
             b_plate.add(insert)
-            length = screw_length(a_plate.thickness, EDGE_INSERT.length, EDGE_INSERT_RELIEF_DEPTH)
-            items += [f"M3x{length} countersunk (ISO 10642)", EDGE_INSERT.name]
+            if fastening is LapFastening.NUT:
+                reach = EDGE_NUT_SLOT_DEPTH + M3_NUT_HEIGHT + M3_NUT_POCKET_CLEARANCE
+                length = screw_length(a_plate.thickness, reach, EDGE_NUT_BORE_DEPTH - reach)
+                items += [f"M3x{length} countersunk (ISO 10642)", "M3 hex nut (ISO 4032)"]
+            else:
+                length = screw_length(a_plate.thickness, EDGE_INSERT.length, EDGE_INSERT_RELIEF_DEPTH)
+                items += [f"M3x{length} countersunk (ISO 10642)", EDGE_INSERT.name]
             chosen.append(position)
             break
     made = len(chosen)

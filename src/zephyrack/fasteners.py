@@ -35,6 +35,7 @@ M3_COUNTERSINK_DIAMETER = 6.0
 """ISO 10642 M3 head is 5.64 mm across (bd_warehouse); the 90 degree seat is cut slightly over."""
 M3_NUT_ACROSS_CORNERS = 6.35
 """ISO 4032 M3 hex nut, 5.5 mm across flats."""
+M3_NUT_ACROSS_FLATS = 5.5
 M3_NUT_HEIGHT = 2.4
 M3_NUT_POCKET_CLEARANCE = 0.3
 

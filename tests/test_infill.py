@@ -69,9 +69,11 @@ def test_side_walls_hold_twice_their_load_as_printed_with_the_infill_ignored() -
         printed = wall_as_printed(chassis.name, chassis)
         assert printed.factor >= SAFETY_FACTOR
         assert printed.factor < wall_bending(chassis.name, chassis).factor
-    # The stock two perimeters would not do for the shortest, widest chassis.
+    # Full-height walls are deep enough that even the stock two perimeters hold the 19 in 1U chassis,
+    # though with less margin than the four the walls are printed with.
     one_u = chassis_19_inch(1)
-    assert printed_wall_bending(one_u.name, one_u, PRUSA_MK3_QUALITY).factor < SAFETY_FACTOR
+    stock = printed_wall_bending(one_u.name, one_u, PRUSA_MK3_QUALITY).factor
+    assert SAFETY_FACTOR <= stock < wall_as_printed(one_u.name, one_u).factor
 
 
 def test_the_bill_of_materials_states_each_parts_print_settings() -> None:

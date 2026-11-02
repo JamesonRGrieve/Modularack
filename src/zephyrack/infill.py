@@ -32,7 +32,7 @@ def voigt_core(density: float) -> float:
 
 def split(plate: Plate, settings: PrintSettings) -> tuple[Part, Part]:
     """The plate's solid shell and its sparse core, which together make the whole plate."""
-    whole = plate.solids()["plate"]
+    whole = plate.body()
     p, bottom = settings.perimeter_thickness, settings.bottom_thickness
     height = plate.thickness - bottom - settings.top_thickness
     if height <= 0 or min(plate.length, plate.width) <= 2 * p:

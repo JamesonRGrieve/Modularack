@@ -30,7 +30,9 @@ def render_views(shape: Compound | Part, path: Path, title: str = "") -> None:
     with tempfile.TemporaryDirectory() as directory:
         model = Path(directory) / "model.glb"
         export_gltf(
-            shape,
+            # Wrapped, because the exporter drops a top-level shape's own location (a part moved
+            # into its print orientation would render unmoved); children keep theirs.
+            Compound(children=[shape]),
             model,
             binary=True,
             linear_deflection=GLTF_LINEAR_DEFLECTION,

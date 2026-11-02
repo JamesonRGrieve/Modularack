@@ -11,7 +11,7 @@ from collections.abc import Callable
 from functools import partial
 
 from .cassette import DriveBay, Vent
-from .chassis import GRID_COLUMNS, MAX_UNITS, MIN_UNITS, RackChassis
+from .chassis import GRID_COLUMNS, MAX_UNITS, MIN_UNITS, EarStyle, RackChassis
 from .component import Component
 from .rack import PrintedRack
 from .standards import ATX, DRIVE_2_5, DRIVE_3_5, MINI_ITX, RACK_10_INCH, RACK_19_INCH
@@ -26,9 +26,9 @@ COLUMNS_3_5_19_INCH = (0, 4, 8)
 COLUMNS_2_5_19_INCH = (0, 3, 6, 9)
 
 
-def chassis_19_inch(units: int) -> RackChassis:
+def chassis_19_inch(units: int, ear_style: EarStyle = EarStyle.SCREW) -> RackChassis:
     """Even rows: three 3.5 in bays. Odd rows: four 2.5 in bays. ATX board behind."""
-    chassis = RackChassis(RACK_19_INCH, units, DEPTH_19_INCH, ATX)
+    chassis = RackChassis(RACK_19_INCH, units, DEPTH_19_INCH, ATX, ear_style=ear_style)
     for row in range(units):
         if row % 2 == 0:
             for column in COLUMNS_3_5_19_INCH:
@@ -40,9 +40,9 @@ def chassis_19_inch(units: int) -> RackChassis:
     return chassis
 
 
-def chassis_10_inch(units: int) -> RackChassis:
+def chassis_10_inch(units: int, ear_style: EarStyle = EarStyle.SCREW) -> RackChassis:
     """Each row: one bay (3.5 in on even rows, 2.5 in on odd) with a vent beside it. Mini-ITX board behind."""
-    chassis = RackChassis(RACK_10_INCH, units, DEPTH_10_INCH, MINI_ITX)
+    chassis = RackChassis(RACK_10_INCH, units, DEPTH_10_INCH, MINI_ITX, ear_style=ear_style)
     for row in range(units):
         bay = chassis.add_module(DriveBay(DRIVE_3_5 if row % 2 == 0 else DRIVE_2_5), 0, row)
         chassis.add_module(Vent(), bay.columns, row, GRID_COLUMNS - bay.columns)
@@ -64,6 +64,11 @@ def reference_builders() -> dict[str, Callable[[], Component]]:
     for units in range(MIN_UNITS, MAX_UNITS + 1):
         builders[f"chassis_10in_{units}U"] = partial(chassis_10_inch, units)
         builders[f"chassis_19in_{units}U"] = partial(chassis_19_inch, units)
+    # Square-hole racks: tool-less hook ears, on the smallest (worst-case) chassis of each width.
+    builders["chassis_10in_1U_hook"] = partial(chassis_10_inch, 1, EarStyle.HOOK)
+    builders["chassis_19in_1U_hook"] = partial(chassis_19_inch, 1, EarStyle.HOOK)
+    builders["chassis_10in_1U_snap"] = partial(chassis_10_inch, 1, EarStyle.SNAP)
+    builders["chassis_19in_1U_snap"] = partial(chassis_19_inch, 1, EarStyle.SNAP)
     builders[f"rack_10in_{RACK_10_INCH_UNITS}U"] = printed_rack_10_inch
     builders[f"rack_19in_{RACK_19_INCH_UNITS}U"] = printed_rack_19_inch
     return builders

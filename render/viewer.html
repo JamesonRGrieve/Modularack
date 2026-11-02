@@ -54,7 +54,8 @@ scene.add(new THREE.HemisphereLight(0xffffff, 0x8a8f96, 0.9));
 const gltf = await new GLTFLoader().loadAsync(params.get("model"));
 const model = gltf.scene;
 model.rotation.x = Math.PI / 2; // glTF is Y-up; build123d exports Z-up geometry into it.
-const material = new THREE.MeshStandardMaterial({ color: BODY_COLOUR, roughness: 0.65, metalness: 0.05,
+// Double-sided: OCCT tessellation mixes triangle winding, so one-sided faces vanish at random.
+const material = new THREE.MeshStandardMaterial({ color: BODY_COLOUR, roughness: 0.65, metalness: 0.05, side: THREE.DoubleSide,
                                                   polygonOffset: true, polygonOffsetFactor: 1, polygonOffsetUnits: 1 });
 const edgeMaterial = new THREE.LineBasicMaterial({ color: EDGE_COLOUR });
 const meshes = [];
