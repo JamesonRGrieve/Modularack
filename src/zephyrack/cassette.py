@@ -17,8 +17,16 @@ from build123d import Part, Pos, Vector
 
 from .component import Component
 from .joints import Hardware, edge_joint
-from .plate import Edge, Frame, Plate, RectCut
-from .sled import DETENT_BUMP, RAIL_MIN_WIDTH, Sled, SledGeometry
+from .passthrough import (
+    COLLAR_CLEARANCE,
+    COLLAR_SHORT,
+    COLLAR_WALL,
+    CONNECTOR_FROM_Y_SIDE,
+    CONNECTOR_HEIGHT,
+    SataAdapter,
+)
+from .plate import Edge, Frame, Plate, RectCut, Rib
+from .sled import DETENT_BUMP, DRIVE_SIDE_CLEARANCE, RAIL_MIN_WIDTH, Sled, SledGeometry
 from .standards import DriveFormFactor
 
 SIDE_THICKNESS = 9.0
@@ -210,6 +218,8 @@ class DriveBay(ModuleKind):
     drive: DriveFormFactor
     rows: int = 1
     levels: int | None = None
+    pass_through: SataAdapter | None = None
+    """A SATA pass-through adapter behind each sled (`passthrough`): the rear stop becomes a backplane."""
 
     def min_width(self) -> float:
         rail_in_groove = GROOVE_DEPTH - SLED_SIDE_CLEARANCE
@@ -224,7 +234,8 @@ class DriveBay(ModuleKind):
         return SledGeometry(self.drive, self.drive.width + 2 * RAIL_MIN_WIDTH + 1)
 
     def depth(self) -> float:
-        return self._nominal().length + REAR_GAP
+        adapter = 0.0 if self.pass_through is None else self.pass_through.body_depth
+        return self._nominal().length + REAR_GAP + adapter
 
     def pitch(self) -> float:
         """Height one sled level takes in a row."""
@@ -255,6 +266,7 @@ class DriveBay(ModuleKind):
         length = cassette.left.length
         detent_u = length - geometry.detent_x
         sleds = 0
+        sled_origins: list[Vector] = []
         for row_index, row_bottom in enumerate(s.row_bottoms):
             for level in range(levels):
                 base = row_bottom + level * self.pitch()
@@ -275,6 +287,7 @@ class DriveBay(ModuleKind):
                 )
                 origin = Vector(0, s.y_right + SIDE_THICKNESS - GROOVE_DEPTH + SLED_SIDE_CLEARANCE, base + SLED_LIFT)
                 cassette.add_child(Sled(f"{cassette.name}_sled{row_index}{level}", geometry, Pos(*origin)))
+                sled_origins.append(origin)
                 sleds += 1
         stop = Plate(
             f"{cassette.name}_rear_stop",
@@ -285,13 +298,62 @@ class DriveBay(ModuleKind):
                 Vector(cassette.x_back + REAR_STOP_THICKNESS, s.y_left, s.z_bottom), Vector(0, -1, 0), Vector(-1, 0, 0)
             ),
         )
-        margin = SIDE_THICKNESS + geometry.rail_width + CABLE_WINDOW_MARGIN
-        stop.add(RectCut(margin, CABLE_WINDOW_MARGIN, stop.length - margin, stop.width - CABLE_WINDOW_MARGIN))
+        if self.pass_through is None:
+            margin = SIDE_THICKNESS + geometry.rail_width + CABLE_WINDOW_MARGIN
+            stop.add(RectCut(margin, CABLE_WINDOW_MARGIN, stop.length - margin, stop.width - CABLE_WINDOW_MARGIN))
+        else:
+            self._backplane(stop, s, geometry, sled_origins, self.pass_through)
         cassette.add_child(stop)
         hardware = edge_joint(stop, cassette.left, Edge.U1)
         hardware.items += edge_joint(stop, cassette.right, Edge.U0).items
         hardware.items += [f"{self.drive.screw}"] * (4 * sleds)
         return hardware
+
+    def _backplane(
+        self, stop: Plate, s: CassetteSlot, geometry: SledGeometry, origins: list[Vector], adapter: SataAdapter
+    ) -> None:
+        """Per sled: a collar locating the adapter, a window for its plug, and blocks that stop the rails."""
+        c, wall = COLLAR_CLEARANCE, COLLAR_WALL
+        height = adapter.body_depth
+
+        def local(y: float, z: float) -> tuple[float, float]:
+            return s.y_left - y, z - s.z_bottom
+
+        bodies: list[tuple[float, float]] = []
+        for origin in origins:
+            drive_y = origin.Y + geometry.rail_width + DRIVE_SIDE_CLEARANCE
+            drive_z = origin.Z + geometry.drive_base
+            # The receptacle offset runs toward the drive's datum-Y side, which is rack -y.
+            body_y = drive_y + CONNECTOR_FROM_Y_SIDE + adapter.receptacle_offset[0]
+            body_z = drive_z + CONNECTOR_HEIGHT - adapter.receptacle_offset[1]
+            if any(abs(body_z - z) < adapter.body_height + 2 * c for _, z in bodies):
+                raise ValueError(
+                    f"{self.drive.name} bay: {adapter.name} bodies ({adapter.body_height:.1f} mm) are taller than "
+                    f"the {self.pitch():.1f} mm between stacked sleds; use one sled level (levels=1)"
+                )
+            bodies.append((body_y, body_z))
+            u, v = local(body_y, body_z)
+            hw, hh = adapter.body_width / 2 + c, adapter.body_height / 2 + c
+            if v - hh < 0 or v + hh > stop.width or u - hw < 0 or u + hw > stop.length:
+                raise ValueError(f"{self.drive.name} bay: {adapter.name} doesn't fit behind the sled")
+            collar = height - COLLAR_SHORT
+            for u0, v0, u1, v1 in (
+                (u - hw - wall, v - hh - wall, u + hw + wall, v - hh),
+                (u - hw - wall, v + hh, u + hw + wall, v + hh + wall),
+                (u - hw - wall, v - hh, u - hw, v + hh),
+                (u + hw, v - hh, u + hw + wall, v + hh),
+            ):
+                # Against the bay's floor the floor itself locates the adapter: a wall without room is left out.
+                u0, v0, u1, v1 = max(u0, 0.0), max(v0, 0.0), min(u1, stop.length), min(v1, stop.width)
+                if u1 - u0 >= wall / 2 and v1 - v0 >= wall / 2:
+                    stop.add(Rib(u0, v0, u1, v1, collar))
+            pw, ph = adapter.plug_width / 2 + c, adapter.plug_height / 2 + c
+            stop.add(RectCut(u - pw, v - ph, u + pw, v + ph))
+            # The sled's rails stop against these just as the drive is fully mated.
+            for rail_y in (origin.Y, origin.Y + geometry.width - geometry.rail_width):
+                a = local(rail_y + geometry.rail_width, origin.Z)
+                b = local(rail_y, origin.Z + geometry.rail_height)
+                stop.add(Rib(max(a[0], 0.0), a[1], min(b[0], stop.length), b[1], height + REAR_GAP))
 
 
 def cells_for(kind: ModuleKind, cell_width: float) -> int:
