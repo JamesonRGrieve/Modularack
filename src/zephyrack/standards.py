@@ -294,3 +294,42 @@ DRIVE_2_5 = DriveFormFactor(
 # SFF-8201 Rev 3.4 Table 3-1 A1 heights; the outline and side holes are the same for every height.
 DRIVE_2_5_9_5MM = replace(DRIVE_2_5, name="2.5in-9.5mm", height=9.5)
 DRIVE_2_5_7MM = replace(DRIVE_2_5, name="2.5in-7mm", height=7.0)
+
+
+@dataclass(frozen=True)
+class FanSize:
+    """A square axial fan's frame and screw pattern.
+
+    `spacings` are the screw-hole patterns (centre to centre, square) a grille offers; `tolerance` widens
+    the screw holes to take the spread between makers and any doubt in the figure.
+    """
+
+    frame: float
+    spacings: tuple[float, ...]
+    tolerance: float
+    source: str
+
+    @property
+    def blade_diameter(self) -> float:
+        """The swept area the grille opens: a little inside the frame."""
+        return self.frame - 4.0
+
+
+FAN_SCREW_CLEARANCE = 4.4
+"""Fan screws (self-tapping #6-32 / M4-ish) and M3 both pass."""
+
+# 120, 140 (square frame) and 200 mm are from Noctua's product pages and NF-A20 datasheet (2026-11-01);
+# Noctua notes there is no industry standard at 200 mm, so both of its patterns are offered. 50 and 70 mm
+# are from vendor listings (70 mm varies 60-61.5 between makers). 40, 60, 80 and 92 mm are the widely cited
+# figures, not checked against a datasheet (Noctua's pages were rate-limited): their holes get extra room.
+FANS: dict[int, FanSize] = {
+    40: FanSize(40.0, (32.0,), 1.0, "commonly cited; unconfirmed"),
+    50: FanSize(50.0, (40.0,), 0.6, "vendor listings, 40.0 +/- 0.3"),
+    60: FanSize(60.0, (50.0,), 1.0, "commonly cited; unconfirmed"),
+    70: FanSize(70.0, (60.75,), 1.5, "vendor listings, 60-61.5 by maker"),
+    80: FanSize(80.0, (71.5,), 1.0, "commonly cited; unconfirmed"),
+    92: FanSize(92.0, (82.5,), 1.0, "commonly cited; unconfirmed"),
+    120: FanSize(120.0, (105.0,), 0.5, "Noctua NF-A12x25 / NF-A15 pages"),
+    140: FanSize(140.0, (124.5,), 0.5, "Noctua (square-frame 140 mm, e.g. NF-A14)"),
+    200: FanSize(200.0, (154.0, 170.0), 0.5, "Noctua NF-A20 page and datasheet; no industry standard"),
+}

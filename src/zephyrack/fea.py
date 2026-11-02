@@ -16,14 +16,14 @@ ZEPHYRACK_CCX, defaulting to the desktop installs the CAD SOP records.
 
 from __future__ import annotations
 
+import argparse
 import logging
 import math
 import os
 import subprocess
-import sys
 import tempfile
 from collections import Counter
-from dataclasses import dataclass, field
+from dataclasses import dataclass, field, replace
 from enum import StrEnum
 from pathlib import Path
 
@@ -86,6 +86,17 @@ class Material:
 
 
 PLA = Material()
+PETG = Material(
+    name="Prusament PETG",
+    density=1.27e-3,
+    modulus=1500.0,
+    poisson=0.38,
+    in_layer_strength=47.0,
+    interlayer_strength=18.0,
+)
+"""Prusament PETG technical data sheet v1.1: 47 MPa horizontal tensile yield, 1.5 GPa, 18 +/- 4 MPa interlayer
+adhesion, 1.27 g/cm^3. Poisson's ratio is typical for PETG, not from the sheet."""
+MATERIALS = {"pla": PLA, "petg": PETG}
 SAFETY_FACTOR = 2.0
 GRAVITY = 9.81e-3
 """N per g."""
@@ -114,14 +125,18 @@ class EarResult:
     in_layer: float
     across_layer_tension: float
     interlayer_shear: float
+    interlayer_combined: float = 0.0
+    """MPa, peak of sqrt(tension across the layers^2 + shear between them^2): the two together on one bond."""
+    material: Material = PLA
 
     @property
     def in_layer_factor(self) -> float:
-        return PLA.in_layer_strength / self.in_layer
+        return self.material.in_layer_strength / self.in_layer
 
     @property
     def interlayer_factor(self) -> float:
-        return PLA.interlayer_strength / max(self.across_layer_tension, self.interlayer_shear)
+        worst = max(self.across_layer_tension, self.interlayer_shear, self.interlayer_combined)
+        return self.material.interlayer_strength / worst
 
     @property
     def passes(self) -> bool:
@@ -225,6 +240,23 @@ DECK_FORMAT = ".10g"
 overflow them and the card is rejected."""
 
 
+def _elastic(material: Material, layer_axis: int, ratio: float) -> list[str]:
+    """The *ELASTIC card: isotropic, or orthotropic with the layer-normal axis `ratio` as stiff (the mesh is in
+    the part's print frame, so material axes are the global ones)."""
+    e, nu = material.modulus, material.poisson
+    if ratio == 1.0:
+        return ["*ELASTIC", f"{e},{nu}"]
+    moduli = [e * (ratio if k == layer_axis else 1.0) for k in range(3)]
+    g = e / (2 * (1 + nu))
+    shear = [g * (ratio if layer_axis in pair else 1.0) for pair in ((0, 1), (0, 2), (1, 2))]
+    first = [*moduli, nu, nu, nu, shear[0], shear[1]]
+    return [
+        "*ELASTIC, TYPE=ENGINEERING CONSTANTS",
+        ",".join(f"{v:{DECK_FORMAT}}" for v in first),
+        f"{shear[2]:{DECK_FORMAT}},0.0",
+    ]
+
+
 def _write_deck(
     path: Path,
     nodes: dict[int, tuple[float, float, float]],
@@ -236,6 +268,9 @@ def _write_deck(
     core_fraction: float = 1.0,
     partial: list[tuple[int, int]] | None = None,
     springs: Springs | None = None,
+    material: Material = PLA,
+    layer_axis: int = 2,
+    layer_modulus_ratio: float = 1.0,
 ) -> None:
     lines = ["*NODE"] + [f"{n},{x:{DECK_FORMAT}},{y:{DECK_FORMAT}},{z:{DECK_FORMAT}}" for n, (x, y, z) in nodes.items()]
     lines += ["*NSET, NSET=NALL"] + [str(n) for n in nodes]
@@ -244,11 +279,11 @@ def _write_deck(
     lines += ["*ELSET, ELSET=SHELL"] + [str(k + 1) for k in range(len(elements)) if k not in core]
     if fixed:
         lines += ["*NSET, NSET=FIXED"] + [str(n) for n in fixed]
-    lines += ["*MATERIAL, NAME=PLA", "*ELASTIC", f"{PLA.modulus},{PLA.poisson}"]
+    lines += ["*MATERIAL, NAME=PLA", *_elastic(material, layer_axis, layer_modulus_ratio)]
     lines += ["*SOLID SECTION, ELSET=SHELL, MATERIAL=PLA"]
     if core:
         lines += ["*ELSET, ELSET=CORE"] + [str(k + 1) for k in sorted(core)]
-        lines += ["*MATERIAL, NAME=INFILL", "*ELASTIC", f"{PLA.modulus * core_fraction},{PLA.poisson}"]
+        lines += ["*MATERIAL, NAME=INFILL", "*ELASTIC", f"{material.modulus * core_fraction},{material.poisson}"]
         lines += ["*SOLID SECTION, ELSET=CORE, MATERIAL=INFILL"]
     if springs:
         # Axial springs (a strut's stiffness), each from a part node to its own fixed ground node.
@@ -354,6 +389,10 @@ class EarProblem:
     layer_axis: int = 2
     """The plate-frame axis that points up in the print: w for a flat plate, u for an edge-printed one."""
     springs: Springs | None = None
+    material: Material = PLA
+    layer_modulus_ratio: float = 1.0
+    """Modulus across the layers (and the shear moduli involving that axis) as a fraction of in-plane:
+    printed parts are softer across their layers, by an amount no data sheet gives (a sensitivity input)."""
 
     def corners(self) -> set[int]:
         return {n for e in self.elements for n in e[:4]}
@@ -587,11 +626,17 @@ def _tail(feature: RackHook | RackPeg | SpringHook, ear: Plate) -> tuple[tuple[f
 
 
 def analyse_corner(
-    name: str, chassis: RackChassis, brace: Brace = Brace.NONE, strut: StrutLayout | None = None
+    name: str,
+    chassis: RackChassis,
+    brace: Brace = Brace.NONE,
+    strut: StrutLayout | None = None,
+    material: Material = PLA,
+    layer_modulus_ratio: float = 1.0,
 ) -> EarResult:
     with tempfile.TemporaryDirectory() as directory:
         work = Path(directory)
-        problem = corner_problem(chassis, work, brace, strut)
+        problem = replace(corner_problem(chassis, work, brace, strut), material=material)
+        problem = replace(problem, layer_modulus_ratio=layer_modulus_ratio)
         return _summarise(name, problem, *solve_calculix(problem, work))
 
 
@@ -647,7 +692,19 @@ def solve_calculix(problem: EarProblem, work: Path, second_order: bool = True) -
     springs = problem.springs
     if springs is not None:
         springs = Springs([(n, end) for n, end in springs.ends if n in nodes], springs.stiffness)
-    _write_deck(work / "ear.inp", nodes, elements, kind, fixed, forces, partial=partial, springs=springs)
+    _write_deck(
+        work / "ear.inp",
+        nodes,
+        elements,
+        kind,
+        fixed,
+        forces,
+        partial=partial,
+        springs=springs,
+        material=problem.material,
+        layer_axis=problem.layer_axis,
+        layer_modulus_ratio=problem.layer_modulus_ratio,
+    )
     subprocess.run([CCX, "-i", "ear"], cwd=work, check=True, capture_output=True, timeout=SOLVER_TIMEOUT)
     return _results(work / "ear.dat")
 
@@ -708,6 +765,8 @@ def _summarise(
         in_layer=peak([von_mises(s) for s in stresses]),
         across_layer_tension=peak([max(0.0, s[axis]) for s in stresses]),
         interlayer_shear=peak([math.hypot(s[a], s[b]) for s in stresses]),
+        interlayer_combined=peak([math.hypot(max(0.0, s[axis]), s[a], s[b]) for s in stresses]),
+        material=problem.material,
     )
 
 
@@ -738,11 +797,16 @@ def _peak(values: list[float], weights: list[float]) -> float:
     return min(values)
 
 
-def analyse_ear(name: str, chassis: RackChassis) -> EarResult:
-    """Second-order CalculiX solution of the ear: the result the design is judged on."""
+def analyse_ear(
+    name: str, chassis: RackChassis, material: Material = PLA, layer_modulus_ratio: float = 1.0
+) -> EarResult:
+    """Second-order CalculiX solution of the ear: the result the design is judged on.
+
+    `layer_modulus_ratio` below 1 makes the part softer across its layers than in them (orthotropic), for
+    the layer-shear sensitivity: printed data sheets give no modulus across the layers."""
     with tempfile.TemporaryDirectory() as directory:
         work = Path(directory)
-        problem = ear_problem(chassis, work)
+        problem = replace(ear_problem(chassis, work), material=material, layer_modulus_ratio=layer_modulus_ratio)
         return _summarise(name, problem, *solve_calculix(problem, work))
 
 
@@ -845,11 +909,16 @@ def printed_wall_bending(name: str, chassis: RackChassis, settings: PrintSetting
     return WallResult(name, moment / wall_section_modulus(WALL_THICKNESS, height, settings, EMPTY_CORE))
 
 
-def ear_as_printed(name: str, chassis: RackChassis) -> EarResult:
+def ear_as_printed(
+    name: str, chassis: RackChassis, material: Material = PLA, layer_modulus_ratio: float = 1.0
+) -> EarResult:
     """The ear judged at its own print settings: solid if it is printed solid, else its shell alone."""
     ear = chassis.children[f"{chassis.name}_left_ear"]
+    assert isinstance(ear, Plate)
+    if ear.merged_into is not None:
+        return analyse_corner(name, chassis, material=material, layer_modulus_ratio=layer_modulus_ratio)
     if ear.print_settings.infill_density >= 1:
-        return analyse_ear(name, chassis)
+        return analyse_ear(name, chassis, material, layer_modulus_ratio)
     return analyse_printed_ear(name, chassis, ear.print_settings, EMPTY_CORE).shell
 
 
@@ -861,13 +930,21 @@ def wall_as_printed(name: str, chassis: RackChassis) -> WallResult:
 
 def main() -> None:
     logging.basicConfig(level=logging.INFO, format="%(message)s")
+    parser = argparse.ArgumentParser(description="Strength checks of the reference chassis, hung from two posts.")
+    parser.add_argument("names", nargs="*", help="reference designs (default: every chassis)")
+    parser.add_argument("--material", choices=sorted(MATERIALS), default="pla")
+    parser.add_argument(
+        "--layer-modulus", type=float, default=1.0, help="modulus across the layers as a fraction of in-plane"
+    )
+    args = parser.parse_args()
+    material, ratio = MATERIALS[args.material], args.layer_modulus
     builders = reference_builders()
-    names = sys.argv[1:] or [n for n in builders if n.startswith("chassis_")]
+    names = args.names or [n for n in builders if n.startswith("chassis_")]
     failed = False
     for name in names:
         design = builders[name]()
         assert isinstance(design, RackChassis)
-        r = ear_as_printed(name, design)
+        r = ear_as_printed(name, design, material, ratio)
         failed |= not r.passes
         logger.info(
             "%s: ear carries %.0f N + %.1f N.m; deflection %.2f mm; in-layer %.1f MPa (x%.1f); "

@@ -10,6 +10,7 @@ import pytest
 
 from zephyrack.crosscheck import LinearProblem, run_code_aster, run_elmer, run_fenicsx
 from zephyrack.fea import (
+    PETG,
     SAFETY_FACTOR,
     _summarise,
     analyse_ear,
@@ -62,3 +63,19 @@ def test_five_independent_codes_agree_on_the_ear(tmp_path: Path) -> None:
     elmer = _summarise("elmer", problem, *run_elmer(linear, work))
     assert elmer.max_displacement == pytest.approx(reference.max_displacement, rel=1e-3)
     assert elmer.interlayer_shear == pytest.approx(reference.interlayer_shear, rel=0.25)
+
+
+def test_a_petg_ear_holds_twice_its_two_post_load() -> None:
+    result = analyse_ear("chassis_19in_1U", chassis_19_inch(1), PETG)
+    assert result.material is PETG
+    assert result.in_layer_factor >= SAFETY_FACTOR
+    assert result.interlayer_factor >= SAFETY_FACTOR
+
+
+def test_softer_layers_do_not_raise_the_stress_between_them() -> None:
+    # Printed parts are softer across their layers by an amount no data sheet gives. Taking that
+    # modulus at 0.6 of in-plane moves load away from the bonds, so the isotropic check is the cautious one.
+    isotropic = analyse_ear("chassis_19in_1U", chassis_19_inch(1))
+    soft = analyse_ear("chassis_19in_1U", chassis_19_inch(1), layer_modulus_ratio=0.6)
+    assert soft.interlayer_factor >= isotropic.interlayer_factor * 0.98
+    assert soft.interlayer_factor >= SAFETY_FACTOR

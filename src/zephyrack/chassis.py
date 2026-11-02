@@ -36,6 +36,8 @@ from .cassette import (
     cells_for,
 )
 from .component import Component
+from .fans import FanGrille
+from .fans import needs as fan_room
 from .fasteners import INSERT_M3_LONG, RACK_SCREW_CLEARANCE
 from .hooks import (
     HOOK_HOLES_PER_UNIT,
@@ -143,6 +145,10 @@ class RackChassis(Component):
     depths (front posts' front face to rear posts' front face, mm). None: no rear support."""
     knee_brace_units: int | None = None
     web_clamp: PostChannel | None = None
+    rear_fans: tuple[int, ...] = ()
+    """Fan grilles in the rear wall, by fan size (mm), placed clear of the I/O aperture and seams."""
+    cover_fans: tuple[int, ...] = ()
+    """Fan grilles in the cover, by fan size, placed from the rear forward."""
     """Two-post channel racks: clamp each side wall to the post's side web (`web`). None: no clamps."""
     """Prop each side wall with a knee brace (`braces`) from the top hole of the U this many units below
     (1 or 2; 2 is much stiffer). Those units' hole columns must be free. None: no braces."""
@@ -240,6 +246,8 @@ class RackChassis(Component):
         # Joints are laid tightest-first: each later joint's stations slide clear of earlier ones.
         hardware.items += self._rear_corner_joints().items
         hardware.items += self._ears().items
+        self._place_fans(self.rear_wall, self.rear_fans, from_end=False)
+        self._place_fans(self.cover, self.cover_fans, from_end=True)
         hardware.items += self._floor_cover_joints().items
         hardware.items += self._cassette_joints(cassettes).items
         self._board(standoffs)
@@ -606,6 +614,38 @@ class RackChassis(Component):
                 self._web_clamp(side, wall)
         return hardware
 
+    def _place_fans(self, panel: Panel, sizes: tuple[int, ...], from_end: bool) -> None:
+        """Each fan's grille at the first spot (from one end of the panel) clear of seams and every feature."""
+        for size in sizes:
+            half = fan_room(size) / 2
+            if panel.width < 2 * half:
+                raise ValueError(f"A {size} mm fan doesn't fit the {panel.width:.0f} mm {panel.name}")
+            us = [half + k for k in range(int(panel.length - 2 * half) + 1)]
+            vs = sorted(
+                (half + k for k in range(int(panel.width - 2 * half) + 1)), key=lambda v: abs(v - panel.width / 2)
+            )
+            for u in reversed(us) if from_end else us:
+                placed = False
+                for v in vs:
+                    if panel.in_splice_zone(u, v, half):
+                        continue
+                    found = panel.segment_at(u, v, margin=half)
+                    if found is None:
+                        continue
+                    plate, lu, lv = found
+                    if plate.blocked((lu - half, lv - half, lu + half, lv + half), -1.0, plate.thickness + 1):
+                        continue
+                    plate.add(FanGrille(lu, lv, size))
+                    placed = True
+                    break
+                if placed:
+                    break
+            else:
+                raise ValueError(
+                    f"No room for a {size} mm fan in {panel.name}: a grille may not cross a seam, and its "
+                    f"bed-sized segments are {_segment_sizes(panel)} (for bigger fans see fans.FanPlate)"
+                )
+
     def _web_clamp(self, side: str, wall: Panel) -> None:
         assert self.web_clamp is not None
         sign = 1.0 if side == "left" else -1.0
@@ -677,6 +717,11 @@ class RackChassis(Component):
         segment.set_print_up(up)
         segment.merge(ear)
         segment.print_settings = SOLID
+
+
+def _segment_sizes(panel: Panel) -> str:
+    sizes = {(round(p.length), round(p.width)) for p in panel.segments.values()}
+    return ", ".join(f"{a} x {b}" for a, b in sorted(sizes)) + " mm"
 
 
 def _offset_stations(span: float) -> list[float]:
