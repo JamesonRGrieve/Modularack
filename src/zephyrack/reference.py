@@ -156,6 +156,12 @@ def reference_builders() -> dict[str, Callable[[], Component]]:
     # Tool-less boxes: walls on floor dovetails, a latched rear wall, a sliding latched cover.
     builders["chassis_10in_2U_toolless"] = partial(chassis_10_inch, 2, EarStyle.HOOK, True, toolless_box=True)
     builders["chassis_19in_2U_toolless"] = partial(chassis_19_inch, 2, EarStyle.SNAP, toolless_box=True)
+    builders["chassis_19in_2U_drawers"] = partial(
+        chassis_19_inch, 2, EarStyle.SNAP, toolless_box=True, toolless_modules=True
+    )
+    builders["chassis_10in_2U_drawers"] = partial(
+        chassis_10_inch, 2, EarStyle.HOOK, True, toolless_box=True, toolless_modules=True
+    )
     builders["chassis_19in_1U_toolless"] = partial(chassis_19_inch, 1, EarStyle.HOOK, True, 2, toolless_box=True)
     builders["chassis_19in_3U_psu"] = chassis_19_inch_powered
     builders["rails_r720"] = ServerRails
