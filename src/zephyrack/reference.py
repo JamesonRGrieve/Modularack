@@ -14,6 +14,7 @@ from .cassette import DriveBay, Vent
 from .chassis import GRID_COLUMNS, MAX_UNITS, MIN_UNITS, EarStyle, RackChassis
 from .component import Component
 from .rack import PrintedRack
+from .servers import Sacrifice, ServerRails
 from .standards import ATX, DRIVE_2_5, DRIVE_3_5, MINI_ITX, RACK_10_INCH, RACK_19_INCH
 from .web import PostChannel
 
@@ -117,6 +118,9 @@ def reference_builders() -> dict[str, Callable[[], Component]]:
     builders["chassis_10in_2U_screw_braced"] = partial(chassis_10_inch, 2, EarStyle.SCREW, True, 1)
     builders["chassis_19in_1U_snap_rear"] = chassis_19_inch_rear_supported
     builders["chassis_19in_1U_hook_web"] = chassis_19_inch_web_clamped
+    builders["rails_r720"] = ServerRails
+    builders["rails_r720_hole"] = partial(ServerRails, sacrifice=Sacrifice.HOLE)
+    builders["shelf_19in"] = partial(ServerRails, shelf=True)
     builders[f"rack_10in_{RACK_10_INCH_UNITS}U"] = printed_rack_10_inch
     builders[f"rack_19in_{RACK_19_INCH_UNITS}U"] = printed_rack_19_inch
     return builders

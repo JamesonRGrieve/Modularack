@@ -52,7 +52,8 @@ class Component(ABC):
         location = Pos(*self.explode_offset(explode_distance)) * self.placement
         shapes = []
         for key, solid in self.solids().items():
-            placed = solid.located(location)
+            # moved, not located: a part may carry its own position in its location (a lone Pos * Box).
+            placed = solid.moved(location)
             placed.label = self.name if key in ("plate", "part") else f"{self.name}.{key}"
             shapes.append(placed)
         for child in self.children.values():
