@@ -32,7 +32,7 @@ from build123d import Compound, Part, export_step
 from skfem import Basis, ElementTetP1, ElementVector, MeshTet1, asm, condense, solve
 from skfem.models.elasticity import lame_parameters, linear_elasticity
 
-from .braces import KNEE_DEPTH_FRACTION, SOCKET_HEIGHT, STRUT_DEPTH, STRUT_WIDTH, KneeBrace, anchor_height
+from .braces import KNEE_DEPTH_FRACTION, SOCKET_HEIGHT, STRUT_DEPTH, KneeBrace, anchor_height
 from .chassis import EAR_THICKNESS, FLOOR_THICKNESS, WALL_THICKNESS, RackChassis
 from .hooks import (
     FLANGE_GAP,
@@ -154,11 +154,14 @@ def chassis_mass(chassis: RackChassis) -> float:
     return printed + payload
 
 
-def _mesh(source: Path, work: Path) -> tuple[dict[int, tuple[float, float, float]], list[list[int]], list[int]]:
+def _mesh(
+    source: Path, work: Path, mesh_size: float | None = None
+) -> tuple[dict[int, tuple[float, float, float]], list[list[int]], list[int]]:
     """Second-order tetrahedra of a STEP (or a .geo merging several), with each element's volume tag."""
     msh = work / "part.msh"
+    base = MESH_SIZE if mesh_size is None else mesh_size
     # gmsh's 3D mesher occasionally gives up on a thin sliver; a slightly finer mesh gets past it.
-    for size in (MESH_SIZE, MESH_SIZE * MESH_RETRY_SCALE):
+    for size in (base, base * MESH_RETRY_SCALE):
         result = subprocess.run(
             [
                 GMSH,
@@ -393,6 +396,8 @@ class EarProblem:
     layer_modulus_ratio: float = 1.0
     """Modulus across the layers (and the shear moduli involving that axis) as a fraction of in-plane:
     printed parts are softer across their layers, by an amount no data sheet gives (a sensitivity input)."""
+    peak_volume: float = 0.0
+    """The volume peaks are taken over; 0 means PEAK_VOLUME. Small features (joint tabs) need less."""
 
     def corners(self) -> set[int]:
         return {n for e in self.elements for n in e[:4]}
@@ -754,8 +759,10 @@ def _summarise(
     a, b = LAYER_SHEARS[axis]
     weights = _point_volumes(problem, len(stresses), owners)
 
+    volume = problem.peak_volume or PEAK_VOLUME
+
     def peak(values: list[float]) -> float:
-        return _percentile(values) if weights is None else _peak(values, weights)
+        return _percentile(values) if weights is None else _peak(values, weights, volume)
 
     return EarResult(
         design=name,
@@ -787,12 +794,12 @@ def _tet_volume(corners: list[Vector3]) -> float:
     return float(abs(np.dot(b - a, np.cross(c - a, d - a))) / 6)
 
 
-def _peak(values: list[float], weights: list[float]) -> float:
-    """The value exceeded over PEAK_VOLUME of material (or the smallest, if there is less than that)."""
+def _peak(values: list[float], weights: list[float], volume: float = PEAK_VOLUME) -> float:
+    """The value exceeded over `volume` of material (or the smallest, if there is less than that)."""
     covered = 0.0
     for value, weight in sorted(zip(values, weights, strict=True), reverse=True):
         covered += weight
-        if covered >= PEAK_VOLUME:
+        if covered >= volume:
             return value
     return min(values)
 
@@ -1003,6 +1010,6 @@ def knee_brace_strut(name: str, chassis: RackChassis) -> StrutResult:
     load = chassis_mass(chassis) * GRAVITY / 2
     force = load * length / rise
     thickness = STRUT_DEPTH * run / length  # the bar's depth across its own axis
-    area = STRUT_WIDTH * thickness
-    second_moment = min(STRUT_WIDTH * thickness**3, thickness * STRUT_WIDTH**3) / 12
+    area = brace.width * thickness
+    second_moment = min(brace.width * thickness**3, thickness * brace.width**3) / 12
     return StrutResult(name, force, force / area, math.pi**2 * PLA.modulus * second_moment / length**2)

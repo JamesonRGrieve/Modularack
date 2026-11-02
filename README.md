@@ -46,12 +46,20 @@ drive dimensions, the SFF-8323 / SFF-8223 drive connector position, and fan scre
   confirmed against a maker's drawing. `FanPlate(sizes)` packs
   one or more fans of any mix of sizes onto a separate plate, as long as they fit the bed, for fans
   too big for a panel segment.
-- **Tool-less cover** (`toolless_cover=True`): dovetail tabs along the cover's edges drop into windows
-  at the side walls' top edges, and the cover slides 12.5 mm forward into the grooves, which hold it
-  down and tie the walls together. A printed spring arm at the rear left corner snaps a tooth into the
-  wall. To open it, press the arm in, slide the cover back and lift. The rest of the box stays screwed:
-  every panel can only slide one way, and at a corner two panels would need to slide along different
-  edges.
+- **Tool-less box** (`toolless_box=True`), or just the cover (`toolless_cover=True`). No screws join
+  the box's panels, and it all comes apart by hand:
+  1. The side walls drop onto the floor, with dovetail tabs on their bottom edges in windows in the
+     floor, and slide 12.5 mm back into the grooves, which carry the floor.
+  2. The rear wall drops in between them. Tenons locate it in the floor, and a printed spring arm at
+     each end snaps a tooth into a side wall, so the rear wall can't lift and the side walls can't slide
+     back out.
+  3. The cover drops between the walls, with its dovetail tabs in windows at their top edges, and slides
+     12.5 mm forward into the grooves. A spring arm at its rear left corner snaps a tooth into the wall.
+
+  To open, reverse it: press the cover's arm in, slide the cover back and lift; press each rear arm's
+  top end in and lift the rear wall; slide the side walls forward and lift. The side walls stand 3 mm in
+  from the floor's edges, so the floor keeps a solid lip outboard of each groove. The ears, the panel
+  splices and the front modules stay screwed: they go together once.
 - **Mounting** (`ear_style=`, `one_piece=`, `knee_brace_units=`), for the worst case of a chassis
   hung from two front posts:
   - `EarStyle.SCREW`: slotted ears for M6 rack screws, in round, threaded or cage-nut holes.
@@ -96,7 +104,8 @@ them, so the structure is arranged so the real loads run along the layers:
 | Part | On the bed | Main load | Direction in the print |
 |---|---|---|---|
 | Floor, cover, shelves | outer face (a tool-less cover: inner face, so its dovetails rise from the bed) | equipment weight, spanning between walls | bending in the plate: along the layers |
-| Cover latch arm | in the cover's plane | bending as the tooth rides the wall (1.2 % strain) | along the layers |
+| Rear wall in a tool-less box | inner face (its tenons and teeth sit at that face) | the cover's hold-down; latching the side walls | in-plane: along the layers |
+| Latch arms (cover, rear wall) | in their plate's plane | bending as the tooth rides the wall (1.2 % strain) | along the layers |
 | Server rail segments, splice plates | outer face | the server's weight, bending the rail | along the layers |
 | Side and rear walls, module sides | outer face | weight carried to the ears; racking | in-plane: along the layers |
 | Screw ears, face plates, posts | front face | rack screws bearing on their holes | in-plane bearing: along the layers |
@@ -118,10 +127,11 @@ them, so the structure is arranged so the real loads run along the layers:
   modules slide over seams and the outside of the chassis stays flat.
 - Neighbouring modules are bolted together side by side (screw and captive nut), and the
   outer modules to the chassis walls.
-- *Interrupted dovetail* (the tool-less cover): short tabs whose 45 degree flank rises from a 1 mm flat
-  on the bed, in grooves whose lower sides slope at 45 degrees too, so they also print in a one-piece
-  corner standing upright. Tests sweep the cover through its motion: locked, it can't lift; slid back,
-  it lifts clear.
+- *Interrupted dovetail* (the tool-less box): short tabs whose 45 degree flank rises from a 1 mm flat
+  on the bed. The floor's grooves undercut at 45 degrees; the walls' grooves for the cover slope their
+  lower sides at 45 degrees too, so they still print in a one-piece corner standing upright. Tests sweep
+  every panel through its motion: locked it can't lift, slid back it lifts clear, and the latches hold
+  only when home.
 
 Joint holes on both parts come from one point in the rack frame, so they line up by
 construction. A joint whose parts don't meet, or whose screw would hit another feature

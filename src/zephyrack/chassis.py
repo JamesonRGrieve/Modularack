@@ -25,7 +25,7 @@ from enum import StrEnum
 
 from build123d import Part, Vector
 
-from . import lid
+from . import lid, toolless
 from .braces import KNEE_DEPTH_FRACTION, KneeBrace, socket_for
 from .cassette import (
     SHELF_THICKNESS,
@@ -163,6 +163,10 @@ class RackChassis(Component):
     depths (front posts' front face to rear posts' front face, mm). None: no rear support."""
     knee_brace_units: int | None = None
     web_clamp: PostChannel | None = None
+    toolless_box: bool = False
+    """Tool-less side walls and rear wall too (`toolless`): floor dovetails and spring latches, no screws
+    between panels. Implies `toolless_cover`; the side walls stand `toolless.WALL_INSET` in from the
+    floor's edges."""
     toolless_cover: bool = False
     """A tool-less cover (`lid`): dovetail tabs in the side walls and a spring latch, instead of screws.
     It prints inner face down and isn't screwed to the rear wall or the top row of modules."""
@@ -188,7 +192,12 @@ class RackChassis(Component):
         if not MIN_UNITS <= self.units <= MAX_UNITS:
             raise ValueError(f"Zephyrack chassis are {MIN_UNITS}U-{MAX_UNITS}U, got {self.units}U")
         Component.__init__(self, f"chassis_{self.rack.name}_{self.units}U")
-        self.width = self.rack.opening - 2 * SIDE_CLEARANCE
+        if self.toolless_box:
+            self.toolless_cover = True
+        self.floor_width = self.rack.opening - 2 * SIDE_CLEARANCE
+        self.wall_inset = toolless.WALL_INSET if self.toolless_box else 0.0
+        self.width = self.floor_width - 2 * self.wall_inset
+        """Outside the side walls: the floor is `floor_width`, wider by the walls' inset."""
         self.height = panel_height(self.units)
         self.inner_width = self.width - 2 * WALL_THICKNESS
         self.inner_height = self.height - FLOOR_THICKNESS - COVER_THICKNESS - COVER_RECESS
@@ -269,7 +278,8 @@ class RackChassis(Component):
             self.add_child(cassette)
             hardware.items += cassette.hardware
         # Joints are laid tightest-first: each later joint's stations slide clear of earlier ones.
-        hardware.items += self._rear_corner_joints().items
+        if not self.toolless_box:
+            hardware.items += self._rear_corner_joints().items
         hardware.items += self._ears().items
         self._psu_bay()
         if self.toolless_cover:
@@ -364,17 +374,18 @@ class RackChassis(Component):
         boss = STANDOFF_BOSS_DIAMETER / 2 + 2
         side_lines = sorted({y for c in cassettes.values() for y in (c.slot.y_left, c.slot.y_right)})
         # Floor/cover v runs from -w/2 (floor) or +w/2 (cover); keep seams off cassette side plates and bosses.
-        floor_keep_v = [(y - SIDE_THICKNESS - 4 + w / 2, y + SIDE_THICKNESS + 4 + w / 2) for y in side_lines]
-        floor_keep_v += [(y + w / 2 - boss, y + w / 2 + boss) for _, y in standoffs.values()]
+        fw = self.floor_width
+        floor_keep_v = [(y - SIDE_THICKNESS - 4 + fw / 2, y + SIDE_THICKNESS + 4 + fw / 2) for y in side_lines]
+        floor_keep_v += [(y + fw / 2 - boss, y + fw / 2 + boss) for _, y in standoffs.values()]
         floor_keep_u = [(x - e - boss, x - e + boss) for x, _ in standoffs.values()]
         inside = w / 2 - t
         cover_keep_v = [(inside - y - SIDE_THICKNESS - 4, inside - y + SIDE_THICKNESS + 4) for y in side_lines]
         self.floor = Panel(
             f"{self.name}_floor",
             d - e,
-            w,
+            fw,
             f,
-            Frame(Vector(e, -w / 2, 0), Vector(1, 0, 0), Vector(0, 0, 1)),
+            Frame(Vector(e, -fw / 2, 0), Vector(1, 0, 0), Vector(0, 0, 1)),
             self.bed,
             floor_keep_u,
             floor_keep_v,
@@ -437,7 +448,7 @@ class RackChassis(Component):
             w - 2 * t,
             h - f - COVER_THICKNESS - COVER_RECESS,
             t,
-            Frame(Vector(d, w / 2 - t, f), Vector(0, -1, 0), Vector(-1, 0, 0)),
+            self._rear_frame(),
             self.bed,
             self._aperture_keepout(),
             explode_direction=Vector(1, 0, 0),
@@ -446,6 +457,22 @@ class RackChassis(Component):
             self.add_child(panel)
         self._cut_aperture()
 
+    def _rear_frame(self) -> Frame:
+        """The rear wall prints outer face down, or inner face down in a tool-less box (its tenons and
+        latch teeth then sit at its inner face)."""
+        inside = self.width / 2 - WALL_THICKNESS
+        if self.toolless_box:
+            return Frame(
+                Vector(self.depth - WALL_THICKNESS, -inside, FLOOR_THICKNESS), Vector(0, 1, 0), Vector(1, 0, 0)
+            )
+        return Frame(Vector(self.depth, inside, FLOOR_THICKNESS), Vector(0, -1, 0), Vector(-1, 0, 0))
+
+    def _rear_u(self, y0: float, y1: float) -> tuple[float, float]:
+        """A rack y range as a sorted u range on the rear wall."""
+        inside = self.width / 2 - WALL_THICKNESS
+        a, b = ((y + inside) if self.toolless_box else (inside - y) for y in (y0, y1))
+        return min(a, b), max(a, b)
+
     def _aperture_span(self) -> tuple[float, float, float, float] | None:
         """The rear I/O aperture as (u0, v0, u1, v1) in the rear wall's frame, clipped to the wall."""
         if self.motherboard is None:
@@ -453,8 +480,7 @@ class RackChassis(Component):
         board = self.motherboard
         near_y = board.width / 2 + self._board_shift() - board.hole_c_from_corner[0] - IO_APERTURE_OFFSET_FROM_C
         far_y = near_y - IO_APERTURE_WIDTH
-        u0 = self.width / 2 - WALL_THICKNESS - near_y
-        u1 = self.width / 2 - WALL_THICKNESS - far_y
+        u0, u1 = self._rear_u(near_y, far_y)
         board_top = FLOOR_THICKNESS + STANDOFF_HEIGHT + BOARD_THICKNESS
         v0 = board_top - IO_APERTURE_BELOW_BOARD_TOP - FLOOR_THICKNESS
         v1 = min(v0 + IO_APERTURE_HEIGHT, self.inner_height)
@@ -465,11 +491,150 @@ class RackChassis(Component):
         keep = [] if span is None else [(span[0] - 4, span[2] + 4)]
         psu = self._psu_layout()
         if psu is not None:
-            u0, u1 = self.width / 2 - WALL_THICKNESS - psu.y1, self.width / 2 - WALL_THICKNESS - psu.y0
+            u0, u1 = self._rear_u(psu.y0, psu.y1)
             keep.append((u0 - 4, u1 + 4))
         return keep
 
     # Power supply -------------------------------------------------------------------------------------
+
+    # Tool-less box -----------------------------------------------------------------------------------
+
+    def _wall_tabs(self, wall: Panel) -> None:
+        """Dovetail tabs along a side wall's bottom edge and their grooves in the floor; the wall slides
+        back to lock, so each window is in front of its groove."""
+        e = EAR_THICKNESS
+        left = wall is self.left_wall
+        edge_v = self.floor_width / 2 + (self.width / 2 if left else -self.width / 2)
+        sign = -1.0 if left else 1.0
+        x0 = e + lid.STATION_MARGIN + lid.SLIDE
+        last = self.depth - WALL_THICKNESS - lid.TAB_LENGTH - lid.STATION_MARGIN
+        placed = 0
+        while x0 <= last:
+            if self._wall_station(wall, x0, edge_v, sign):
+                placed += 1
+                x0 += lid.STATION_PITCH
+            else:
+                x0 += 1.0
+        if placed < 2:
+            raise ValueError(f"{self.name}: only {placed} floor dovetails fit under {wall.name}; it needs two")
+
+    def _wall_station(self, wall: Panel, x0: float, edge_v: float, sign: float) -> bool:
+        c, e, floor = lid.CLEARANCE, EAR_THICKNESS, self.floor
+        us = sorted(wall.frame.to_local(Vector(x, 0, 0)).X for x in (x0, x0 + lid.TAB_LENGTH))
+        mid = (us[0] + us[1]) / 2
+        if wall.in_splice_zone(mid, wall.width / 2, lid.TAB_LENGTH / 2 + 1):
+            return False
+        found = wall.segment_at(mid, wall.width / 2, margin=lid.TAB_LENGTH / 2 + 1)
+        if found is None:
+            return False
+        plate, lu, _ = found
+        tab = lid.CoverTab(us[0] - mid + lu, us[1] - mid + lu, 0.0, -1.0)
+        region, (low, high) = feature_extent(tab, plate)
+        assert region is not None
+        if plate.blocked((region[0], 0.0, region[2], region[3]), low, high):
+            return False
+        # The floor: the groove under the locked tab, the window under it one slide forward.
+        lock = (x0 - c - e, x0 + lid.TAB_LENGTH + c - e)
+        window = (lock[0] - lid.SLIDE, lock[0])
+        span = (window[0], lock[1])
+        probe_v = edge_v + sign * lid.TAB_TOP / 2
+        half = (span[1] - span[0]) / 2
+        if floor.in_splice_zone((span[0] + span[1]) / 2, probe_v, half):
+            return False
+        located = floor.segment_at((span[0] + span[1]) / 2, probe_v, margin=0.0)
+        if located is None:
+            return False
+        fplate, fu, fv = located
+        du, dv = fu - (span[0] + span[1]) / 2, fv - probe_v
+        if not (span[0] + du > 0 and span[1] + du < fplate.length):
+            return False
+        socket = toolless.FloorSocket((lock[0] + du, lock[1] + du), (window[0] + du, window[1] + du), edge_v + dv, sign)
+        fregion, (flow, fhigh) = feature_extent(socket, fplate)
+        if fregion is None or fplate.blocked(fregion, flow, fhigh):
+            return False
+        plate.add(tab)
+        fplate.add(socket)
+        return True
+
+    def _rear_wall_joints(self) -> None:
+        """Tenons from the rear wall's bottom edge into floor pockets, and a sprung tooth at each end into
+        the side walls."""
+        rear, c = self.rear_wall, lid.CLEARANCE
+        wall_x = self.depth - WALL_THICKNESS
+        # Tenons: spread along the wall, each sliding to a clear spot.
+        targets = edge_positions(rear.length, toolless.TENON_PITCH, toolless.TENON_LENGTH)
+        placed = 0
+        for target in targets:
+            for offset in sorted(range(-40, 41), key=abs):
+                u0 = target + offset - toolless.TENON_LENGTH / 2
+                if self._rear_tenon(u0, wall_x):
+                    placed += 1
+                    break
+        if placed < 2:
+            raise ValueError(f"{self.name}: only {placed} rear wall tenons fit; it needs two")
+        # Latches at both ends.
+        height = rear.width
+        v1 = height - toolless.REAR_TOOTH_TOP_MARGIN
+        v0 = v1 - toolless.REAR_TOOTH_HEIGHT
+        for edge_u, outward in ((0.0, -1.0), (rear.length, 1.0)):
+            probe = edge_u - outward * 1.0
+            found = rear.segment_at(probe, height / 2)
+            assert found is not None
+            plate, lu, _ = found
+            du = lu - probe
+            arm_inner = edge_u - outward * toolless.REAR_ARM_WIDTH
+            relief = sorted((arm_inner, arm_inner - outward * toolless.REAR_ARM_RELIEF))
+            plate.add(RectCut(relief[0] + du, toolless.REAR_ARM_ROOT, relief[1] + du, plate.width + 1))
+            plate.add(toolless.SideTooth(edge_u + du, outward, v0, v1))
+            # The pocket in the side wall the tooth springs into.
+            y = rear.frame.to_rack(Vector(edge_u, 0, 0)).Y
+            side = self.left_wall if y > 0 else self.right_wall
+            x_range = (wall_x - c, wall_x + toolless.REAR_TOOTH_THICKNESS + c)
+            us = sorted(side.frame.to_local(Vector(x, 0, 0)).X for x in x_range)
+            mid = (us[0] + us[1]) / 2
+            hit = side.segment_at(mid, side.width / 2)
+            if hit is None or side.in_splice_zone(mid, side.width / 2, (us[1] - us[0]) / 2 + 1):
+                raise ValueError(f"{self.name}: the rear latch's pocket lands on a seam of {side.name}")
+            splate, su, _ = hit
+            pocket = RectCut(us[0] - mid + su, v0 - c, us[1] - mid + su, v1 + c, toolless.REAR_TOOTH + c)
+            sregion, (slow, shigh) = feature_extent(pocket, splate)
+            if sregion is None or splate.blocked(sregion, slow, shigh):
+                raise ValueError(f"{self.name}: no room for the rear latch's pocket in {side.name}")
+            splate.add(pocket)
+
+    def _rear_tenon(self, u0: float, wall_x: float) -> bool:
+        rear, floor, c = self.rear_wall, self.floor, lid.CLEARANCE
+        u1 = u0 + toolless.TENON_LENGTH
+        mid = (u0 + u1) / 2
+        if u0 < toolless.REAR_ARM_WIDTH + toolless.REAR_ARM_RELIEF + 4:
+            return False
+        if u1 > rear.length - toolless.REAR_ARM_WIDTH - toolless.REAR_ARM_RELIEF - 4:
+            return False
+        if rear.in_splice_zone(mid, rear.width / 2, toolless.TENON_LENGTH / 2 + 1):
+            return False
+        found = rear.segment_at(mid, rear.width / 2, margin=toolless.TENON_LENGTH / 2 + 1)
+        if found is None:
+            return False
+        plate, lu, _ = found
+        tenon = toolless.Tenon(u0 - mid + lu, u1 - mid + lu)
+        if plate.blocked((tenon.u0, 0.0, tenon.u1, 2.0), 0.0, toolless.TENON_THICKNESS):
+            return False
+        ys = sorted(rear.frame.to_rack(Vector(u, 0, 0)).Y for u in (u0, u1))
+        fu0 = wall_x - c - EAR_THICKNESS
+        fu1 = wall_x + toolless.TENON_THICKNESS + c - EAR_THICKNESS
+        fv0, fv1 = ys[0] - c + self.floor_width / 2, ys[1] + c + self.floor_width / 2
+        located = floor.segment_at((fu0 + fu1) / 2, (fv0 + fv1) / 2, margin=0.0)
+        if located is None or floor.in_splice_zone((fu0 + fu1) / 2, (fv0 + fv1) / 2, toolless.TENON_LENGTH / 2 + 1):
+            return False
+        fplate, fu, fv = located
+        du, dv = fu - (fu0 + fu1) / 2, fv - (fv0 + fv1) / 2
+        pocket = RectCut(fu0 + du, fv0 + dv, fu1 + du, fv1 + dv, toolless.TENON_REACH + c)
+        fregion, (flow, fhigh) = feature_extent(pocket, fplate)
+        if fregion is None or fplate.blocked(fregion, flow, fhigh) or fu1 + du > fplate.length:
+            return False
+        plate.add(tenon)
+        fplate.add(pocket)
+        return True
 
     # Tool-less cover ---------------------------------------------------------------------------------
 
@@ -624,12 +789,11 @@ class RackChassis(Component):
         deepest = max((c.x_back for c in self.children.values() if isinstance(c, Cassette)), default=0.0)
         if reach < deepest + SHELF_THICKNESS:
             raise ValueError(f"{self.name}: a {spec.lengths[1]:.0f} mm power supply reaches the front modules")
-        inside = self.width / 2 - WALL_THICKNESS
 
         def rear_uv(face_x: float, face_y: float) -> tuple[float, float]:
             # Viewed from behind, the face's x runs toward +y; on its side the face turns a quarter.
             x, y = (spec.height - face_y, face_x) if psu.on_side else (face_x, face_y)
-            return inside - (psu.y0 + x), y
+            return self._rear_u(psu.y0 + x, psu.y0 + x)[0], y
 
         for hx, hy in spec.holes:
             u, v = rear_uv(hx, hy)
@@ -660,7 +824,7 @@ class RackChassis(Component):
     def _floor_rib(self, x0: float, x1: float, y0: float, y1: float) -> None:
         floor = self.floor
         u0, u1 = x0 - EAR_THICKNESS, x1 - EAR_THICKNESS
-        v0, v1 = y0 + self.width / 2, y1 + self.width / 2
+        v0, v1 = y0 + self.floor_width / 2, y1 + self.floor_width / 2
         zone = floor.splice.zone
         for (i, j), plate in floor.segments.items():
             pu0, pu1 = floor.u_bounds[i], floor.u_bounds[i + 1]
@@ -694,6 +858,12 @@ class RackChassis(Component):
 
     def _floor_cover_joints(self) -> Hardware:
         hardware = Hardware([])
+        if self.toolless_box:
+            for wall in (self.left_wall, self.right_wall):
+                self._wall_tabs(wall)
+            self._rear_wall_joints()
+            self._cover_tabs()
+            return hardware
         for wall in (self.left_wall, self.right_wall, self.rear_wall):
             # An I/O aperture can take most of a narrow rear wall; its corners then carry the joint.
             minimum = 1 if wall is self.rear_wall and self.motherboard is not None else None
@@ -802,7 +972,7 @@ class RackChassis(Component):
 
     def _board(self, standoffs: dict[MountingHole, tuple[float, float]]) -> None:
         for x, y in standoffs.values():
-            u, v = x - EAR_THICKNESS, y + self.width / 2
+            u, v = x - EAR_THICKNESS, y + self.floor_width / 2
             located = self.floor.segment_at(u, v, STANDOFF_BOSS_DIAMETER / 2)
             if located is None:
                 raise ValueError(f"Standoff at ({x:.1f}, {y:.1f}) lands on a floor seam")
@@ -955,6 +1125,7 @@ class RackChassis(Component):
                 socket_x,
                 FLOOR_THICKNESS,
                 self.knee_brace_units,
+                self.wall_inset,
             )
         )
 

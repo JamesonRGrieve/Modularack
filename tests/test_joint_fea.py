@@ -1,0 +1,34 @@
+# SPDX-License-Identifier: AGPL-3.0-or-later
+"""FEA of the tool-less box's dovetails (needs gmsh and CalculiX, like test_fea)."""
+
+import tempfile
+from pathlib import Path
+
+import pytest
+
+from zephyrack.fea import SAFETY_FACTOR
+from zephyrack.joint_fea import analyse_dovetails, cover_lip_problem, lip_problem, tab_problem
+from zephyrack.reference import chassis_19_inch
+
+
+@pytest.fixture(scope="module")
+def chassis():  # type: ignore[no-untyped-def]
+    return chassis_19_inch(1, toolless_box=True)
+
+
+@pytest.mark.parametrize("build", [tab_problem, lip_problem, cover_lip_problem])
+def test_every_load_and_support_lands_on_the_mesh(chassis, build) -> None:  # type: ignore[no-untyped-def]
+    with tempfile.TemporaryDirectory() as tmp:
+        problem = build(chassis, Path(tmp))
+    assert problem.fixed
+    assert all(nodes for nodes, _ in problem.loads)
+
+
+def test_the_floor_dovetails_hold_the_chassis_at_twice_its_weight(chassis) -> None:  # type: ignore[no-untyped-def]
+    results = {r.joint: r for r in analyse_dovetails("19in 1U", chassis)}
+    for result in results.values():
+        assert result.factor >= SAFETY_FACTOR, result
+        # A solid, sensible deflection: the supports leave no mechanism.
+        assert result.result.max_displacement < 0.5
+    # The floor's lip, bent up across its layers, is the weaker side of the joint.
+    assert results["lip"].factor < results["tab"].factor

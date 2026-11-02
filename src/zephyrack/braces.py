@@ -40,6 +40,8 @@ FLANGE_BACK = 2.66 + 0.3
 """Behind the post's front face to the strut's end: the thickest (12 gauge) flange, plus clearance."""
 PEG_WIDTH = 6.0
 PEG_PROUD = 1.0
+PEG_EDGE_MARGIN = 1.5
+"""Plastic beyond the peg's outer side, when the strut has to widen to reach the hole column."""
 """How far the peg stands out in front of the post."""
 SOCKET_LENGTH = 16.0
 SOCKET_HEIGHT = 12.0
@@ -75,11 +77,17 @@ class KneeBrace(Component):
         socket_x: float,
         floor_top: float,
         units_below: int,
+        ledge: float = 0.0,
     ) -> None:
         super().__init__(name)
         self.side, self.wall_face_y, self.hole_y = side, wall_face_y, hole_y
         self.post_face_x, self.socket_x, self.floor_top = post_face_x, socket_x, floor_top
         self.units_below = units_below
+        self.ledge = ledge
+        """How far the floor stands out past the wall (a tool-less box): the strut passes outside it."""
+        # Wide enough to reach the hole column from outside the floor.
+        reach = abs(hole_y - wall_face_y) + PEG_WIDTH / 2 + PEG_EDGE_MARGIN - STRUT_SIDE_CLEARANCE - ledge
+        self.width = max(STRUT_WIDTH, reach)
         # Printed lying on its outer face: rack -y (left) or +y (right) is up in the print.
         self.print_location = Location(Plane(origin=(0, 0, 0), x_dir=(1, 0, 0), z_dir=(0, -side, 0))).inverse()
 
@@ -89,7 +97,8 @@ class KneeBrace(Component):
 
     def solids(self) -> dict[str, Part]:
         s = self
-        y0, y1 = s._y(STRUT_SIDE_CLEARANCE, STRUT_SIDE_CLEARANCE + STRUT_WIDTH)
+        start = s.ledge + STRUT_SIDE_CLEARANCE
+        y0, y1 = s._y(start, start + s.width)
         if not (min(y0, y1) <= s.hole_y - PEG_WIDTH / 2 and s.hole_y + PEG_WIDTH / 2 <= max(y0, y1)):
             raise ValueError(f"{s.name}: the strut doesn't reach the hole column")
         end_x = s.post_face_x + FLANGE_BACK
@@ -126,7 +135,7 @@ class KneeBrace(Component):
             hole_bottom + SQUARE_HOLE - HOOK_VERTICAL_CLEARANCE,
         )
         # The tongue reaches into the wall's pocket, bearing on its top and rear faces.
-        tongue_y = s._y(-(SOCKET_DEPTH - SOCKET_CLEARANCE), STRUT_SIDE_CLEARANCE + 0.5)
+        tongue_y = s._y(-(SOCKET_DEPTH - SOCKET_CLEARANCE), start + 0.5)
         tongue = _box(block_x0 + SOCKET_SLIDE, block_x1, *tongue_y, s.floor_top + 0.5, block_z1)
         return {"part": bar + block + peg + tongue}
 
