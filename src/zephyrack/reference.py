@@ -126,6 +126,13 @@ def printed_rack_19_inch() -> PrintedRack:
     return PrintedRack(RACK_19_INCH, RACK_19_INCH_UNITS, RACK_19_INCH_DEPTH)
 
 
+def _coupons() -> Component:
+    # Imported here: coupons are cut from this module's reference chassis.
+    from .coupons import CouponSet
+
+    return CouponSet()
+
+
 def reference_builders() -> dict[str, Callable[[], Component]]:
     """Every reference design by name; each builder makes a fresh, fully built assembly."""
     builders: dict[str, Callable[[], Component]] = {}
@@ -150,6 +157,7 @@ def reference_builders() -> dict[str, Callable[[], Component]]:
     builders["rails_r720"] = ServerRails
     builders["rails_r720_hole"] = partial(ServerRails, sacrifice=Sacrifice.HOLE)
     builders["shelf_19in"] = partial(ServerRails, shelf=True)
+    builders["coupons"] = _coupons
     builders[f"rack_10in_{RACK_10_INCH_UNITS}U"] = printed_rack_10_inch
     builders[f"rack_19in_{RACK_19_INCH_UNITS}U"] = printed_rack_19_inch
     return builders

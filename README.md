@@ -283,10 +283,22 @@ for.
 
 ## Before you print a full set
 
-Print coupons first: a short wall segment with two edge inserts, a splice strip and its two
-mating corners, one sled in its bay, and an ear against your rack. The clearances (sled
-groove, detent, insert bores, drive-screw recesses) are starting values; tune them in
-`cassette.py`, `sled.py` and `fasteners.py`.
+Print the coupons first: `uv run zephyrack-build build coupons` writes them to `build/coupons/stl/`. Each
+one is cut from a real part in its own print orientation, so it has that part's exact geometry, and each
+pair assembles mated:
+
+| Coupon | What to try | Tune |
+|---|---|---|
+| `floor_dovetail_a/b` | drop the wall's tab into the floor's window, slide it back into the groove: it should slide by hand and not lift | `lid.CLEARANCE` |
+| `cover_dovetail_a/b` | drop the cover's tab into the wall's window and slide it forward into the groove | `lid.CLEARANCE` |
+| `cover_latch_a/b` | slide the cover strip forward along the wall strip: the arm bends and the tooth snaps in; press the arm to release | `lid.TOOTH`, `lid.LATCH_RELIEF` |
+| `rear_latch_a/b` | lower the rear-wall end against the side-wall strip: the tooth clicks in and holds; press the arm's top to release | `toolless.REAR_TOOTH` |
+| `rear_tenon_a/b` | the tenon drops into its floor pocket without play | `lid.CLEARANCE` |
+| `edge_insert_a/b` | press two M3x5.7 inserts into the wall's edge and screw the floor strip on | `fasteners.EDGE_INSERT` |
+| `sata_collar` | press the adapter into the collar, male side through the window | `passthrough.SataAdapter` (measure yours first) |
+
+Also print one sled in its bay, and an ear against your rack. The clearances are starting values; record
+what fits in the CAD SOP.
 
 Measure before printing a backplane: the SATA pass-through adapter's body (width, height, and its
 depth with a drive fully mated), its male side's size, and where its receptacle sits on the body, then
