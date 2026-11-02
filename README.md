@@ -300,6 +300,13 @@ pair assembles mated:
 Also print one sled in its bay, and an ear against your rack. The clearances are starting values; record
 what fits in the CAD SOP.
 
+**Measuring sheet:** `uv run python -m zephyrack.calibration` writes A4 and Letter PDFs to
+`build/calibration/`.
+- Page 1 is a millimetre grid with four oriented corner markers and a corner stop. Print it at 100 %,
+  check the grid with calipers, and photograph a part lying on it from straight above. The photo can then
+  be corrected for perspective and measured.
+- Page 2 records what a photo can't give: caliper readings for the SATA adapter and how each coupon fit.
+
 Measure before printing a backplane: the SATA pass-through adapter's body (width, height, and its
 depth with a drive fully mated), its male side's size, and where its receptacle sits on the body, then
 pass them as a `SataAdapter`. Measure your channel posts for a web clamp the same way.
