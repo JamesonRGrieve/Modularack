@@ -353,6 +353,16 @@ class RectCut(Feature):
         return extrude(BrepFace(Wire.make_polygon(points, close=True)), amount=length, dir=direction)
 
 
+def edge_pocket(plate: Plate, u: float, length: float, height: float, depth: float) -> RectCut:
+    """A pocket in the bed face, open at the bottom (v = 0) edge, for a tongue to bear up into.
+
+    On a plate printed upright the pocket's far side is roofed (RectCut._roof); on one printed flat a
+    pocket in the bed face would be a ceiling, so it goes right through instead: a notch.
+    """
+    half = length / 2
+    return RectCut(u - half, -1.0, u + half, height, None if plate.print_up is None else depth, from_bed=True)
+
+
 @dataclass
 class Slot(Feature):
     """A through slot with round ends, running along u."""

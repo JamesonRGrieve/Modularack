@@ -51,6 +51,8 @@ from .joints import EDGE_JOINT_END_MARGIN, Hardware, LapFastening, edge_joint, e
 from .layout import MK3S_BED, Bed, Panel
 from .plate import Boss, BossPocket, Edge, Frame, Plate, RectCut, Slot
 from .print_settings import SOLID
+from .rear import TONGUE_SPACING, RearArm, RearLayout, RearPin, pockets_for
+from .rear import TOP_MARGIN as REAR_TOP_MARGIN
 from .standards import (
     BOARD_THICKNESS,
     CEB,
@@ -71,6 +73,8 @@ from .standards import (
     RackStandard,
     panel_height,
 )
+from .web import PLATE_THICKNESS as WEB_PLATE_THICKNESS
+from .web import PostChannel, WebClamp, clamp_pocket
 
 MIN_UNITS = 1
 MAX_UNITS = 4
@@ -81,6 +85,8 @@ COVER_THICKNESS = FLOOR_THICKNESS
 """The cover sits between the full-height side walls, which screw into captive nuts in its edges."""
 COVER_RECESS = 1.0
 CORNER_RESERVE_MARGIN = 2.0
+REAR_TONGUE_INSET = 30.0
+"""The rear support's rear tongue sits this far in front of the chassis's back."""
 """The cover's top sits this far below the walls' top, so the walls' screws into it clear their top edge."""
 EAR_THICKNESS = 9.0
 """Thicker than the 6 mm face plates: the ears take the overturning moment through their countersunk screws."""
@@ -132,7 +138,12 @@ class RackChassis(Component):
     """SSI EEB/CEB alternate locations (F', H', ...) the chosen board uses, added to its legacy holes."""
     ear_style: EarStyle = EarStyle.SCREW
     one_piece: bool = False
+    rear_support: tuple[float, float] | None = None
+    """Four-post racks: carry the chassis's back on the rear posts (`rear`), adjustable between these rack
+    depths (front posts' front face to rear posts' front face, mm). None: no rear support."""
     knee_brace_units: int | None = None
+    web_clamp: PostChannel | None = None
+    """Two-post channel racks: clamp each side wall to the post's side web (`web`). None: no clamps."""
     """Prop each side wall with a knee brace (`braces`) from the top hole of the U this many units below
     (1 or 2; 2 is much stiffer). Those units' hole columns must be free. None: no braces."""
     """Print each ear and the front segment of its side wall as one upright piece, with no joint between them."""
@@ -589,7 +600,49 @@ class RackChassis(Component):
                 hardware.items += edge_joint(ear, wall, edge).items
             if self.knee_brace_units is not None:
                 self._knee_brace(side, wall, edge)
+            if self.rear_support is not None:
+                self._rear_support(side, wall)
+            if self.web_clamp is not None:
+                self._web_clamp(side, wall)
         return hardware
+
+    def _web_clamp(self, side: str, wall: Panel) -> None:
+        assert self.web_clamp is not None
+        sign = 1.0 if side == "left" else -1.0
+        clamp = WebClamp(
+            f"{self.name}_{side}_web_clamp",
+            sign,
+            sign * self.width / 2,
+            sign * self.rack.opening / 2,
+            EAR_THICKNESS,
+            FLOOR_THICKNESS,
+            self.height - REAR_TOP_MARGIN,
+            self.web_clamp,
+        )
+        clamp_pocket(wall, clamp.rear_x - WEB_PLATE_THICKNESS / 2, FLOOR_THICKNESS)
+        self.add_child(clamp)
+
+    def _rear_support(self, side: str, wall: Panel) -> None:
+        assert self.rear_support is not None
+        shortest, longest = self.rear_support
+        if longest < shortest:
+            raise ValueError(f"Rear support range {self.rear_support} runs backwards")
+        sign = 1.0 if side == "left" else -1.0
+        back = self.depth - REAR_TONGUE_INSET
+        layout = RearLayout(
+            sign,
+            sign * self.width / 2,
+            sign * self.rack.hole_spacing / 2,
+            FLOOR_THICKNESS,
+            self.height - REAR_TOP_MARGIN,
+            (back - TONGUE_SPACING, back),
+            (EAR_THICKNESS + shortest, EAR_THICKNESS + longest),
+        )
+        layout.check()
+        pockets_for(wall, layout)
+        self.add_child(RearArm(f"{self.name}_{side}_rear_arm_front", layout, rear=False))
+        self.add_child(RearArm(f"{self.name}_{side}_rear_arm_rear", layout, rear=True))
+        self.add_child(RearPin(f"{self.name}_{side}_rear_pin", layout))
 
     def _knee_brace(self, side: str, wall: Panel, edge: Edge) -> None:
         if self.knee_brace_units not in (1, 2):

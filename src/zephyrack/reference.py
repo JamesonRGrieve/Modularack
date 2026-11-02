@@ -15,8 +15,11 @@ from .chassis import GRID_COLUMNS, MAX_UNITS, MIN_UNITS, EarStyle, RackChassis
 from .component import Component
 from .rack import PrintedRack
 from .standards import ATX, DRIVE_2_5, DRIVE_3_5, MINI_ITX, RACK_10_INCH, RACK_19_INCH
+from .web import PostChannel
 
 DEPTH_10_INCH = 380.0
+REAR_SPAN_19_INCH = (520.0, 640.0)
+"""Front posts' front face to rear posts' front face, shortest and longest."""
 DEPTH_19_INCH = 470.0
 RACK_10_INCH_UNITS = 6
 RACK_10_INCH_DEPTH = 300.0
@@ -70,6 +73,26 @@ def chassis_10_inch(
     return chassis
 
 
+def chassis_19_inch_rear_supported() -> RackChassis:
+    """Four-post: snap ears, the back carried on rear posts 520-640 mm behind the front posts."""
+    chassis = RackChassis(RACK_19_INCH, 1, DEPTH_19_INCH, ATX, ear_style=EarStyle.SNAP, rear_support=REAR_SPAN_19_INCH)
+    for column in COLUMNS_3_5_19_INCH:
+        chassis.add_module(DriveBay(DRIVE_3_5), column, 0)
+    chassis.build()
+    return chassis
+
+
+def chassis_19_inch_web_clamped() -> RackChassis:
+    """Two-post channel rack: one-piece hook corners clamped to the posts' side webs (common 3 in channel)."""
+    chassis = RackChassis(
+        RACK_19_INCH, 1, DEPTH_19_INCH, ATX, ear_style=EarStyle.HOOK, one_piece=True, web_clamp=PostChannel()
+    )
+    for column in COLUMNS_3_5_19_INCH:
+        chassis.add_module(DriveBay(DRIVE_3_5), column, 0)
+    chassis.build()
+    return chassis
+
+
 def printed_rack_10_inch() -> PrintedRack:
     return PrintedRack(RACK_10_INCH, RACK_10_INCH_UNITS, RACK_10_INCH_DEPTH)
 
@@ -92,6 +115,8 @@ def reference_builders() -> dict[str, Callable[[], Component]]:
     # The strongest two-post set-ups: one-piece upright corners propped by knee braces.
     builders["chassis_19in_1U_snap_braced"] = partial(chassis_19_inch, 1, EarStyle.SNAP, True, 2)
     builders["chassis_10in_2U_screw_braced"] = partial(chassis_10_inch, 2, EarStyle.SCREW, True, 1)
+    builders["chassis_19in_1U_snap_rear"] = chassis_19_inch_rear_supported
+    builders["chassis_19in_1U_hook_web"] = chassis_19_inch_web_clamped
     builders[f"rack_10in_{RACK_10_INCH_UNITS}U"] = printed_rack_10_inch
     builders[f"rack_19in_{RACK_19_INCH_UNITS}U"] = printed_rack_19_inch
     return builders

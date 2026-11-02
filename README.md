@@ -40,6 +40,13 @@ I/O aperture, and the SFF-8301 (3.5 in) and SFF-8201 (2.5 in) drive dimensions.
   - `knee_brace_units=1` or `2`: a strut fitted from the side (open-frame racks, or with a side
     panel off) props each side wall from a square hole one or two units below the chassis. Those
     units' hole columns must be free.
+  - `rear_support=(shortest, longest)` (four-post racks): two arms per side, hung on the wall and
+    pegged into the rear posts' square holes, locked at any length in the rack-depth range by a
+    printed pin through a 1 mm vernier of holes. Both arms must fit the bed, which limits the range
+    (about 120 mm for a 470 mm chassis).
+  - `web_clamp=PostChannel(...)` (two-post channel racks): a jaw on each side wall grips the post's
+    side web, tightened by an M5 thumbscrew into a captive nut. `PostChannel` defaults to a common
+    3 in channel of 2.5 mm steel; measure your posts and pass their sizes.
 - **Printed rack** (`PrintedRack`): posts with the EIA-310 hole pattern and captive M6 nuts,
   side panels, base and top. Two-post or four-post. Chassis also fit any bought EIA-310 rack;
   their ear holes are slotted for the variation between brands (10 in racks have no formal
@@ -144,17 +151,19 @@ the rest of the chassis as the shear and bending moment at its splice to the nex
 segment; a knee brace is its strut's own stiffness as springs from the anchor hole.
 In-layer / across-layer factors:
 
-| Ears | Separate ear | One-piece corner | Corner + brace 1U down | Corner + brace 2U down |
-|---|---|---|---|---|
-| Screw | x3.1 / x2.5 (flat) | x3.6 / x3.9 | x4.7 / x5.3 | |
-| Hook | x1.8 / x1.5 | x2.1 / x1.7 | x2.8 / x2.3 | x6.1 / x5.5 |
-| Snap | x1.0 / x0.8 | x1.0 / x0.8 | x1.3 / x1.1 | x4.7 / x3.3 |
+| Ears | Separate ear | One-piece corner | Corner + brace 1U down | Corner + brace 2U down | Corner + web clamp |
+|---|---|---|---|---|---|
+| Screw | x3.1 / x2.5 (flat) | x3.6 / x3.9 | x4.7 / x5.3 | | |
+| Hook | x1.8 / x1.5 | x2.1 / x1.7 | x2.8 / x2.3 | x6.1 / x5.5 | x7.8 / x5.0 |
+| Snap | x1.0 / x0.8 | x1.0 / x0.8 | x1.3 / x1.1 | x4.7 / x3.3 | x7.6 / x4.9 |
 
 So in a two-post rack, hook ears want at least a one-piece corner with a brace one unit down,
 and snap ears a brace two units down; screw ears pass on their own. The brace's strut itself
 carries at most 341 N (19 in 4U, anchor one unit down): x21 on strength and x7.8 on buckling.
-In a four-post rack a support to the rear posts takes the overturning moment off the front ears
-entirely (rear supports are not built yet).
+The web clamp holds the chassis up 79 mm behind the ears, so it carries 2.9 times the side's share of
+the weight (the ears then hold the front down); its grip (two faces of PLA on painted steel at a
+hand-tight 1 kN) holds twice that up to a 19 in 4U chassis. In a four-post rack the rear support
+takes the overturning moment off the front ears entirely.
 
 The set-up is cross-checked by five independent codes on the same linear mesh and loads: CalculiX,
 scikit-fem, FEniCSx (micromamba env `zephyrack-fenicsx`), Code_Aster (`simvia/code_aster` container)

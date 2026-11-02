@@ -27,7 +27,7 @@ from build123d import Box, Face, Location, Part, Plane, Pos, Vector, Wire, extru
 from .component import Component
 from .hooks import HOOK_VERTICAL_CLEARANCE, SQUARE_HOLE
 from .layout import Panel
-from .plate import RectCut
+from .plate import edge_pocket
 from .standards import PANEL_HEIGHT_DEDUCTION, RACK_UNIT, U_HOLE_OFFSETS
 
 STRUT_WIDTH = 12.0
@@ -143,5 +143,4 @@ def socket_for(wall: Panel, socket_x: float, floor_top: float) -> None:
     if found is None:
         raise ValueError(f"{wall.name}: the knee brace's socket lands on a seam")
     plate, lu, _ = found
-    half = (max(us) - min(us)) / 2
-    plate.add(RectCut(lu - half, -1.0, lu + half, SOCKET_HEIGHT, SOCKET_DEPTH, from_bed=True))
+    plate.add(edge_pocket(plate, lu, max(us) - min(us), SOCKET_HEIGHT, SOCKET_DEPTH))

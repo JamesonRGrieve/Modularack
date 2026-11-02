@@ -33,7 +33,7 @@ from skfem import Basis, ElementTetP1, ElementVector, MeshTet1, asm, condense, s
 from skfem.models.elasticity import lame_parameters, linear_elasticity
 
 from .braces import KNEE_DEPTH_FRACTION, SOCKET_HEIGHT, STRUT_DEPTH, STRUT_WIDTH, KneeBrace, anchor_height
-from .chassis import FLOOR_THICKNESS, WALL_THICKNESS, RackChassis
+from .chassis import EAR_THICKNESS, FLOOR_THICKNESS, WALL_THICKNESS, RackChassis
 from .hooks import (
     FLANGE_GAP,
     HOOK_DROP,
@@ -53,6 +53,10 @@ from .print_settings import PrintSettings
 from .reference import reference_builders
 from .sled import Sled
 from .standards import DRIVE_3_5, PANEL_HEIGHT_DEDUCTION, POST_INNER_EDGE_TO_HOLE, RACK_UNIT, U_HOLE_OFFSETS
+from .web import CLEARANCE as WEB_CLEARANCE
+from .web import JAW as WEB_JAW
+from .web import PLATE_THICKNESS as WEB_PLATE
+from .web import PostChannel
 
 logger = logging.getLogger(__name__)
 
@@ -446,6 +450,8 @@ class Brace(StrEnum):
     """A rigid bar behind the post's flange holds every peg's and hook's tail back (rearward support)."""
     KNEE = "knee"
     """A strut from the post props the wall's bottom edge at KNEE_DEPTH of the corner's wall (upward support)."""
+    WEB = "web"
+    """A side-web clamp: the post's web holds the wall up (by friction) at the clamp, behind the ears."""
     STRUT = "strut"
     """A real knee brace: a PLA strut (STRUT_SECTION) from behind the flange at the top hole of the U below
     to a socket on the wall's outer face at KNEE_DEPTH, as axial springs of its own stiffness."""
@@ -504,6 +510,13 @@ def corner_problem(
             for n, (u, v, w) in nodes.items()
             for (u0, u1), back in tails
             if u0 - 0.05 <= u <= u1 + 0.05 and abs(w - back) < 0.05
+        ]
+    elif brace is Brace.WEB:
+        clamp_w = EAR_THICKNESS + PostChannel().web_depth + WEB_CLEARANCE + WEB_JAW - WEB_PLATE / 2
+        partial += [
+            (n, 2)
+            for n, (u, v, w) in nodes.items()
+            if abs(u - WALL_THICKNESS) < 0.05 and abs(w - clamp_w) <= WEB_PLATE / 2 and v <= chassis.height
         ]
     elif brace is Brace.KNEE:
         prop_w = ear.thickness + KNEE_DEPTH * segment.length
