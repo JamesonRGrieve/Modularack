@@ -26,9 +26,11 @@ from pathlib import Path
 from build123d import Box, Part, Pos, export_step
 
 from . import lid, toolless
+from .cassette import Cassette
 from .chassis import RackChassis
 from .fea import (
     GRAVITY,
+    PAYLOAD,
     PLA,
     SAFETY_FACTOR,
     EarProblem,
@@ -39,7 +41,9 @@ from .fea import (
     chassis_mass,
     solve_calculix,
 )
-from .plate import Plate
+from .plate import Plate, RectCut
+from .sled import Sled
+from .standards import DRIVE_3_5
 
 REFERENCE_LOAD = 100.0
 """N on one tab: the solve is linear, so capacities scale from it."""
@@ -295,6 +299,169 @@ def analyse_latches(name: str, chassis: RackChassis) -> list[LatchResult]:
     return results
 
 
+def _module_plates(chassis: RackChassis) -> list[tuple[Cassette, int]]:
+    """Each drawer module and how many rail tabs (detent included) hold it."""
+    out = []
+    for c in chassis.children.values():
+        if isinstance(c, Cassette):
+            n = sum(
+                isinstance(f, toolless.RailTab | toolless.DetentBump) for p in (c.left, c.right) for f in p.features
+            )
+            if n:
+                out.append((c, n))
+    return out
+
+
+def rail_demand(chassis: RackChassis) -> float:
+    """N per rail tab: the heaviest module (its printed parts solid, plus its drives) lifted at 1 g, as if
+    the chassis were turned over, shared by its tabs."""
+    worst = 0.0
+    for cassette, tabs in _module_plates(chassis):
+        grams = sum(part.volume for part in cassette.printable_parts().values()) * PLA.density
+        for sled in (d for d in cassette.descendants() if isinstance(d, Sled)):
+            grams += PAYLOAD.drive_3_5 if sled.geometry.drive is DRIVE_3_5 else PAYLOAD.drive_2_5
+        worst = max(worst, grams * GRAVITY / tabs)
+    if not worst:
+        raise ValueError(f"{chassis.name} has no drawer modules: build it with toolless_modules=True")
+    return worst
+
+
+def rail_tab_problem(chassis: RackChassis, work: Path) -> EarProblem:
+    """A slice of a module's side plate around one rail tab, held at its top cut. Lifted, the tab bears up
+    on the groove's far lip: pushed down and toward the near side, held there by the groove's near wall
+    (or the neighbour's tab beside it)."""
+    plate, feature = _first_cassette(chassis, toolless.RailTab)
+    assert isinstance(feature, toolless.RailTab)
+    t, undercut, reach, top = plate.thickness, lid.TAB_UNDERCUT, lid.TAB_REACH, lid.TAB_TOP
+    u0, u1 = max(feature.u0 - SLICE_MARGIN, 0.0), min(feature.u1 + SLICE_MARGIN, plate.length)
+    height = min(TAB_SLICE_HEIGHT, plate.width)
+    export_step(plate.body() & _box(u0, -reach - 1, -1, u1, height, t + 1), work / "part.step")
+    nodes, elements, _ = _mesh(work / "part.step", work, JOINT_MESH_SIZE)
+    on_tab = [n for n, (u, _, _) in nodes.items() if feature.u0 - 0.01 <= u <= feature.u1 + 0.01]
+    flank = [
+        n
+        for n in on_tab
+        if -undercut - 0.01 <= nodes[n][1] <= 0.01 and abs(nodes[n][2] - (top - nodes[n][1])) < ON_SURFACE
+    ]
+    near = [n for n in on_tab if -reach - 0.01 <= nodes[n][1] <= 0.01 and abs(nodes[n][2]) < ON_SURFACE]
+    fixed = [n for n, (_, v, _) in nodes.items() if v >= height - ON_SURFACE]
+    loads = [(flank, (0.0, -REFERENCE_LOAD, -REFERENCE_LOAD))]
+    return EarProblem(
+        nodes,
+        elements,
+        fixed,
+        loads,
+        REFERENCE_LOAD,
+        0.0,
+        partial=[(n, 3) for n in near],
+        layer_axis=_layer_axis(plate),
+        peak_volume=JOINT_PEAK_VOLUME,
+    )
+
+
+def rail_lip_problem(chassis: RackChassis, work: Path) -> EarProblem:
+    """A slice of the floor around one drawer rail, held at its cut toward the module's middle; a lifted
+    tab bears up and outward on the groove's far lip."""
+    plate, feature = _first(chassis, toolless.RailGroove, ["floor"])
+    assert isinstance(feature, toolless.RailGroove)
+    t, c = plate.thickness, lid.CLEARANCE
+    undercut, top = lid.TAB_UNDERCUT, lid.TAB_TOP
+    drop = c * math.sqrt(2)
+    l0, _ = sorted(feature.lock)
+    # One tab's stretch of the rail (the tabs share the load evenly), clear of the open front end.
+    tab = (max(l0, 0.0) + SLICE_MARGIN, max(l0, 0.0) + SLICE_MARGIN + lid.TAB_LENGTH)
+    u0, u1 = tab[0] - SLICE_MARGIN, min(tab[1] + SLICE_MARGIN, plate.length)
+    near = feature.edge_v - feature.sign * SLICE_MARGIN
+    far = feature.edge_v + feature.sign * LIP_SLICE_DEPTH
+    v0, v1 = sorted((near, far))
+    export_step(plate.body() & _box(u0, max(v0, 0.0), -1, u1, min(v1, plate.width), t + 1), work / "part.step")
+    nodes, elements, _ = _mesh(work / "part.step", work, JOINT_MESH_SIZE)
+
+    def profile(n: int) -> tuple[float, float]:
+        _, v, w = nodes[n]
+        return t - w, feature.sign * (v - feature.edge_v)
+
+    under = [n for n, (u, _, _) in nodes.items() if tab[0] <= u <= tab[1]]
+    flank = [
+        n
+        for n in under
+        if -0.01 <= profile(n)[0] <= undercut + c - drop + 0.01
+        and abs(profile(n)[1] - (top + profile(n)[0] + drop)) < ON_SURFACE
+    ]
+    fixed = [n for n, (_, v, _) in nodes.items() if abs(v - far) < ON_SURFACE]
+    s = feature.sign
+    loads = [(flank, (0.0, s * REFERENCE_LOAD, REFERENCE_LOAD))]
+    return EarProblem(
+        nodes, elements, fixed, loads, REFERENCE_LOAD, 0.0, layer_axis=_layer_axis(plate), peak_volume=JOINT_PEAK_VOLUME
+    )
+
+
+def _first_cassette(chassis: RackChassis, kind: type) -> tuple[Plate, object]:
+    for c in chassis.children.values():
+        if isinstance(c, Cassette):
+            for plate in (c.left, c.right):
+                for f in plate.features:
+                    if isinstance(f, kind):
+                        return plate, f
+    raise ValueError(f"{chassis.name} has no {kind.__name__}: build it with toolless_modules=True")
+
+
+def detent_problem(chassis: RackChassis, work: Path) -> tuple[EarProblem, float, float]:
+    """A drawer's detent arm in a slice of its side plate, held above the relief slot and behind the arm's
+    root; the groove floor pushes the nose up by its travel. Returns the problem, the travel and the
+    closed-form strain."""
+    plate, bump = _first_cassette(chassis, toolless.DetentBump)
+    assert isinstance(bump, toolless.DetentBump)
+    t, r = plate.thickness, lid.TAB_REACH
+    slot = next(f for f in plate.features if isinstance(f, RectCut) and abs(f.v0 - toolless.DETENT_ARM_HEIGHT) < 1e-6)
+    root = slot.u1 if bump.front_low else slot.u0
+    u0, u1 = (-1.0, root + SLICE_MARGIN) if bump.front_low else (root - SLICE_MARGIN, plate.length + 1)
+    top = toolless.DETENT_ARM_HEIGHT + toolless.DETENT_RELIEF + SLICE_MARGIN
+    export_step(plate.body() & _box(u0, -r - bump.drop - 1, -1, u1, top, t + 1), work / "part.step")
+    nodes, elements, _ = _mesh(work / "part.step", work, JOINT_MESH_SIZE)
+    nose = [
+        n
+        for n, (u, v, _) in nodes.items()
+        if bump.u0 + bump.drop <= u <= bump.u1 - bump.drop and abs(v - (-r - bump.drop)) < ON_SURFACE
+    ]
+    fixed = [
+        n
+        for n, (u, v, _) in nodes.items()
+        if v >= top - ON_SURFACE or abs(u - (u1 if bump.front_low else u0)) < ON_SURFACE
+    ]
+    lever = abs(root - (bump.u0 + bump.u1) / 2)
+    travel = bump.drop - lid.CLEARANCE
+    force = _latch_force(toolless.DETENT_ARM_HEIGHT, t, lever, travel)
+    problem = EarProblem(
+        nodes,
+        elements,
+        fixed,
+        [(nose, (0.0, force, 0.0))],
+        force,
+        0.0,
+        layer_axis=_layer_axis(plate),
+        peak_volume=JOINT_PEAK_VOLUME,
+    )
+    return problem, travel, toolless.detent_strain(lever, bump.drop)
+
+
+def analyse_rails(name: str, chassis: RackChassis) -> tuple[list[JointResult], LatchResult]:
+    need = rail_demand(chassis)
+    results = []
+    for joint, build in (("rail tab", rail_tab_problem), ("rail lip", rail_lip_problem)):
+        with tempfile.TemporaryDirectory() as tmp:
+            work = Path(tmp)
+            problem = build(chassis, work)
+            displacement, stresses = solve_calculix(problem, work)
+            results.append(JointResult(joint, _summarise(f"{name} {joint}", problem, displacement, stresses), need))
+    with tempfile.TemporaryDirectory() as tmp:
+        work = Path(tmp)
+        problem, travel, closed = detent_problem(chassis, work)
+        displacement, stresses = solve_calculix(problem, work)
+        summary = _summarise(f"{name} detent", problem, displacement, stresses)
+    return results, LatchResult("detent", closed, summary.in_layer / PLA.modulus, displacement, travel)
+
+
 def analyse_dovetails(name: str, chassis: RackChassis) -> list[JointResult]:
     results = []
     need = demand(chassis)
@@ -323,7 +490,7 @@ def main() -> None:
     args = parser.parse_args()
     builders = reference_builders()
     sweep = {
-        f"{label}_{units}U_toolless_box": partial(build, units, toolless_box=True)
+        f"{label}_{units}U_toolless_box": partial(build, units, toolless_box=True, toolless_modules=True)
         for label, build in (("chassis_10in", chassis_10_inch), ("chassis_19in", chassis_19_inch))
         for units in range(1, 5)
     }
@@ -338,6 +505,17 @@ def main() -> None:
             print(
                 f"{design:32} {r.joint:9} {r.demand_n:7.1f} {e.in_layer:9.2f} "
                 f"{max(e.interlayer_shear, e.interlayer_combined):8.2f} {r.capacity_n:11.0f} {r.factor:7.1f}"
+            )
+        if chassis.toolless_modules:
+            rails, detent = analyse_rails(design, chassis)
+            for r in rails:
+                e = r.result
+                print(
+                    f"{design:32} {r.joint:9} {r.demand_n:7.1f} {e.in_layer:9.2f} "
+                    f"{max(e.interlayer_shear, e.interlayer_combined):8.2f} {r.capacity_n:11.0f} {r.factor:7.1f}"
+                )
+            print(
+                f"{design:32} detent: strain {detent.fea_strain:.2%} FEA vs {detent.closed_form_strain:.2%} closed form"
             )
         for latch in analyse_latches(design, chassis):
             print(

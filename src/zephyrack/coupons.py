@@ -38,6 +38,9 @@ COUPON_NOTES = {
     "rear_latch": "Lower the rear-wall end into place against the side-wall strip: the tooth should click "
     "into its pocket and hold; press the arm's top inward to release. Tune toolless.REAR_TOOTH.",
     "rear_tenon": "The tenon should drop into the floor pocket without play. Tune lid.CLEARANCE.",
+    "drawer_rail": "Slide the side-plate strip into the floor strip's rail from its front edge: the tabs should "
+    "run freely, the detent click into its notch, and lifting the arm's front end release it. Tune "
+    "lid.CLEARANCE and toolless.DETENT_DROP.",
     "edge_insert": "Press two M3x5.7 inserts into the wall's bottom edge and screw the floor strip on with "
     "M3 countersunk screws. Tune fasteners.EDGE_INSERT.",
     "sata_collar": "Press the adapter into the collar with its male side through the window; it should sit "
@@ -83,6 +86,7 @@ class CouponSet(Component):
         self._cover_dovetail(box)
         self._cover_latch(box)
         self._rear(box)
+        self._drawer(chassis_19_inch(1, toolless_box=True, toolless_modules=True))
         self._edge_insert(chassis_19_inch(2))
         self._sata_collar()
         screw = screw_length(FLOOR_THICKNESS, EDGE_INSERT.length, EDGE_INSERT_RELIEF_DEPTH)
@@ -165,6 +169,25 @@ class CouponSet(Component):
             "rear_tenon",
             (rear_t, (tenon.u0 - MARGIN, -toolless.TENON_REACH - 1, tenon.u1 + MARGIN, 15.0)),
             (floor, (hole.u0 - MARGIN, hole.v0 - MARGIN, floor.length + 1, hole.v1 + MARGIN)),
+        )
+
+    def _drawer(self, drawers: RackChassis) -> None:
+        cassette = next(c for c in drawers.children.values() if isinstance(c, Cassette))
+        side = cassette.left
+        bump = next(f for f in side.features if isinstance(f, toolless.DetentBump))
+        tab = next(f for f in side.features if isinstance(f, toolless.RailTab))
+        floor, groove = _first(drawers.floor, toolless.RailGroove)
+        assert isinstance(groove, toolless.RailGroove)
+        _, hi = sorted(groove.lock)
+        v0, v1 = sorted((groove.edge_v - groove.sign * MARGIN, groove.edge_v + groove.sign * 20.0))
+        # The floor's u behind the side plate's first rail tab.
+        tab_back = floor.frame.to_local(side.frame.to_rack(Vector(tab.u1, 0, 0))).X
+        self._pair(
+            "drawer_rail",
+            # The side plate's front, with its detent arm and first rail tab behind it.
+            (side, (min(bump.u0, 0.0) - 1, -lid.TAB_REACH - bump.drop - 1, tab.u1 + 2, 20.0)),
+            # The rail from the floor's front edge back past that tab, with the detent's notch.
+            (floor, (-1.0, max(v0, 0.0), min(hi + 1, tab_back + MARGIN), min(v1, floor.width))),
         )
 
     def _edge_insert(self, screwed: RackChassis) -> None:

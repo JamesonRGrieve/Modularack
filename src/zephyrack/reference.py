@@ -37,6 +37,7 @@ def chassis_19_inch(
     knee_brace_units: int | None = None,
     toolless_cover: bool = False,
     toolless_box: bool = False,
+    toolless_modules: bool = False,
 ) -> RackChassis:
     """Even rows: three 3.5 in bays. Odd rows: four 2.5 in bays. ATX board behind."""
     chassis = RackChassis(
@@ -49,6 +50,7 @@ def chassis_19_inch(
         knee_brace_units=knee_brace_units,
         toolless_cover=toolless_cover,
         toolless_box=toolless_box,
+        toolless_modules=toolless_modules,
     )
     for row in range(units):
         if row % 2 == 0:
@@ -68,6 +70,7 @@ def chassis_10_inch(
     knee_brace_units: int | None = None,
     toolless_cover: bool = False,
     toolless_box: bool = False,
+    toolless_modules: bool = False,
 ) -> RackChassis:
     """Each row: one bay (3.5 in on even rows, 2.5 in on odd) with a vent beside it. Mini-ITX board behind."""
     chassis = RackChassis(
@@ -80,6 +83,7 @@ def chassis_10_inch(
         knee_brace_units=knee_brace_units,
         toolless_cover=toolless_cover,
         toolless_box=toolless_box,
+        toolless_modules=toolless_modules,
     )
     for row in range(units):
         bay = chassis.add_module(DriveBay(DRIVE_3_5 if row % 2 == 0 else DRIVE_2_5), 0, row)

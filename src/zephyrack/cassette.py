@@ -135,7 +135,7 @@ class Cassette(Component):
     def explode_offset(self, distance: float) -> Vector:
         return Vector(-EXPLODE_RATIO * distance, 0, 0)
 
-    def add_shelf(self) -> Plate:
+    def add_shelf(self, thickness: float = SHELF_THICKNESS) -> Plate:
         """A plate across this cassette's top, carrying the cassette above."""
         s = self.slot
         # Shelves start behind the face-plate plane, so face plates in the rows above and below can meet over them.
@@ -144,7 +144,7 @@ class Cassette(Component):
             f"{self.name}_shelf",
             self.x_back - x0,
             s.width,
-            SHELF_THICKNESS,
+            thickness,
             Frame(Vector(x0, s.y_right, s.z_top), Vector(1, 0, 0), Vector(0, 0, 1)),
         )
         self.add_child(self.shelf)

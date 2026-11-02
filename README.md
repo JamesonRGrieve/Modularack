@@ -56,6 +56,15 @@ drive dimensions, the SFF-8323 / SFF-8223 drive connector position, and fan scre
   3. The cover drops between the walls, with its dovetail tabs in windows at their top edges, and slides
      12.5 mm forward into the grooves. A spring arm at its rear left corner snaps a tooth into the wall.
 
+  With `toolless_modules=True` the front modules become drawers, with the cover on or off:
+  - Dovetail tabs on their side plates slide in rails that run back from the floor's front edge (or from
+    the front of the shelf below), and a sprung detent clicks into a notch when the module is home.
+  - To take a module out, lift the detent arm's front end and pull.
+  - Each tab's hold is on the side away from its bed face, so two neighbouring modules' plates, standing
+    back to back, share one groove.
+  - Shelves thicken to 7 mm to take the rails, and sit on tenons up from their own module's side plates.
+  - A short module (a vent or blank) gets short tabs and a detent sized to its arm.
+
   To open, reverse it: press the cover's arm in, slide the cover back and lift; press each rear arm's
   top end in and lift the rear wall; slide the side walls forward and lift. The side walls stand 3 mm in
   from the floor's edges, so the floor keeps a solid lip outboard of each groove. The ears, the panel
@@ -239,6 +248,10 @@ pulled straight up with 200 N. Worst factors at x2 over every tool-less box (10 
 | Floor lip over the tab | bent up, across the floor's layers | 33 N | 19 in 4U, 16.9 N a tab | x3.9 |
 | Wall lip over a cover tab | the cover pulled up | 78-82 N | 10 in, 25 N a tab | x6.2 |
 
+Drawer rails (`toolless_modules`), with the heaviest module lifted at 1 g, as if the chassis were turned
+over: each rail tab carries 143 N at x2 against about 1.4 N, and the floor's rail lip 50 N (x74 at
+worst). The detent arm strains 0.64 % by FEA (0.50 % closed form; the slot's root concentrates it).
+
 The floor's lip is the weak side, as expected for a lip loaded across its layers. The latch arms bend in
 their plate's plane: FEA puts the cover arm at 1.15 % strain (closed form 1.16 %) and the rear arm at
 1.13 % (1.22 %), under PLA's 2 %. In a tool-less box the ears are 3 mm longer: the 19 in 1U screw ear goes
@@ -294,6 +307,7 @@ pair assembles mated:
 | `cover_latch_a/b` | slide the cover strip forward along the wall strip: the arm bends and the tooth snaps in; press the arm to release | `lid.TOOTH`, `lid.LATCH_RELIEF` |
 | `rear_latch_a/b` | lower the rear-wall end against the side-wall strip: the tooth clicks in and holds; press the arm's top to release | `toolless.REAR_TOOTH` |
 | `rear_tenon_a/b` | the tenon drops into its floor pocket without play | `lid.CLEARANCE` |
+| `drawer_rail_a/b` | slide the side-plate strip into the rail from the front: the tabs run freely, the detent clicks into its notch, and lifting the arm's front end releases it | `lid.CLEARANCE`, `toolless.DETENT_DROP` |
 | `edge_insert_a/b` | press two M3x5.7 inserts into the wall's edge and screw the floor strip on | `fasteners.EDGE_INSERT` |
 | `sata_collar` | press the adapter into the collar, male side through the window | `passthrough.SataAdapter` (measure yours first) |
 

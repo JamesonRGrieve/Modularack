@@ -89,6 +89,10 @@ COVER_THICKNESS = FLOOR_THICKNESS
 """The cover sits between the full-height side walls, which screw into captive nuts in its edges."""
 COVER_RECESS = 1.0
 CORNER_RESERVE_MARGIN = 2.0
+MODULE_TAB_PITCH = 40.0
+SHORT_TAB_LENGTH = 8.0
+"""Rail tabs on a short module (a vent or blank)."""
+"""Most spacing between a drawer's rail tabs."""
 PSU_MARGIN = 2.0
 """Between the board (or the power supply's rib) and a side wall."""
 PSU_RIB = 4.0
@@ -167,6 +171,10 @@ class RackChassis(Component):
     """Tool-less side walls and rear wall too (`toolless`): floor dovetails and spring latches, no screws
     between panels. Implies `toolless_cover`; the side walls stand `toolless.WALL_INSET` in from the
     floor's edges."""
+    toolless_modules: bool = False
+    """Front modules as drawers (`toolless`): dovetail tabs on their side plates slide in rails from the
+    floor's (or the shelf's) front edge, and a sprung detent holds them home. No screws hold them in, and
+    they come out with the cover on. Shelves thicken to the floor's thickness to take the rails."""
     toolless_cover: bool = False
     """A tool-less cover (`lid`): dovetail tabs in the side walls and a spring latch, instead of screws.
     It prints inner face down and isn't screwed to the rear wall or the top row of modules."""
@@ -197,12 +205,13 @@ class RackChassis(Component):
         self.floor_width = self.rack.opening - 2 * SIDE_CLEARANCE
         self.wall_inset = toolless.WALL_INSET if self.toolless_box else 0.0
         self.width = self.floor_width - 2 * self.wall_inset
+        self.shelf_thickness = FLOOR_THICKNESS if self.toolless_modules else SHELF_THICKNESS
         """Outside the side walls: the floor is `floor_width`, wider by the walls' inset."""
         self.height = panel_height(self.units)
         self.inner_width = self.width - 2 * WALL_THICKNESS
         self.inner_height = self.height - FLOOR_THICKNESS - COVER_THICKNESS - COVER_RECESS
         self.cell_width = self.inner_width / GRID_COLUMNS
-        self.row_height = (self.inner_height - (self.units - 1) * SHELF_THICKNESS) / self.units
+        self.row_height = (self.inner_height - (self.units - 1) * self.shelf_thickness) / self.units
         self.occupied = [[False] * GRID_COLUMNS for _ in range(self.units)]
         self.max_module_columns = int(max(self.bed.usable_x, self.bed.usable_y) // self.cell_width)
         self.built = False
@@ -213,7 +222,7 @@ class RackChassis(Component):
     # Grid -----------------------------------------------------------------------------------
 
     def row_bottom(self, row: int) -> float:
-        return FLOOR_THICKNESS + row * (self.row_height + SHELF_THICKNESS)
+        return FLOOR_THICKNESS + row * (self.row_height + self.shelf_thickness)
 
     def is_available(self, column: int, row: int, columns: int, rows: int) -> bool:
         if column < 0 or row < 0 or column + columns > GRID_COLUMNS or row + rows > self.units:
@@ -303,8 +312,8 @@ class RackChassis(Component):
         top_row = placement.row + placement.kind.rows - 1
         z_bottom = self.row_bottom(placement.row)
         z_top = self.row_bottom(top_row) + self.row_height
-        face_bottom = 0.0 if placement.row == 0 else z_bottom - SHELF_THICKNESS / 2
-        face_top = self.height if top_row == self.units - 1 else z_top + SHELF_THICKNESS / 2
+        face_bottom = 0.0 if placement.row == 0 else z_bottom - self.shelf_thickness / 2
+        face_top = self.height if top_row == self.units - 1 else z_top + self.shelf_thickness / 2
         rows = tuple(self.row_bottom(r) for r in range(placement.row, top_row + 1))
         return CassetteSlot(
             y_left,
@@ -326,7 +335,7 @@ class RackChassis(Component):
             name = f"{self.name}_r{placement.row}c{placement.column}"
             cassette = Cassette(name, placement.kind, self._slot(placement))
             if placement.row + placement.kind.rows < self.units:
-                cassette.add_shelf()
+                cassette.add_shelf(self.shelf_thickness)
             cassettes[(placement.row, placement.column)] = cassette
         return cassettes
 
@@ -879,7 +888,157 @@ class RackChassis(Component):
         hardware.items += edge_joint(self.right_wall, self.cover, Edge.V1, fastening=nut).items
         return hardware
 
+    def _support_at(self, x: float, y: float, z: float) -> tuple[Plate, float, float, float] | None:
+        """The floor segment or shelf whose top face is at height z under rack (x, y): the plate, its
+        local u and v there, and how far that point is from the plate's front edge along u."""
+        if abs(z - FLOOR_THICKNESS) < 1e-6:
+            local = self.floor.frame.to_local(Vector(x, y, z))
+            found = self.floor.segment_at(local.X, local.Y)
+            if found is None:
+                return None
+            plate, lu, lv = found
+            return plate, lu, lv, lu
+        for cassette in self.children.values():
+            shelf = cassette.shelf if isinstance(cassette, Cassette) else None
+            if shelf is None:
+                continue
+            local = shelf.frame.to_local(Vector(x, y, z))
+            if abs(local.Z - shelf.thickness) < 1e-6 and shelf.contains(local.X, local.Y, 0.0):
+                return shelf, local.X, local.Y, local.X
+        return None
+
+    def _module_rails(self, cassette: Cassette) -> None:
+        """Tabs along both side plates' bottom edges in rails from the support's front edge; a detent on
+        the left plate's front."""
+        c, s = lid.CLEARANCE, cassette.slot
+        z = s.z_bottom
+        for plate in (cassette.left, cassette.right):
+            frame = plate.frame
+            bed_y = frame.origin.Y
+            inward = frame.w.Y
+            front_x, back_x = cassette.x_front, cassette.x_back
+
+            def u_of(x: float, frame: Frame = frame) -> float:
+                return frame.to_local(Vector(x, 0, 0)).X
+
+            # The rail stays in the plate under the module's front: it starts behind that plate's front edge
+            # and ends short of its rear edge (and of a floor seam's splice band behind it).
+            probe_y = bed_y + inward * lid.TAB_TOP / 2
+            first = self._support_at(max(front_x, EAR_THICKNESS) + 2, probe_y, z)
+            if first is None:
+                raise ValueError(f"{cassette.name}: nothing under {plate.name}'s front for a rail")
+            support_front = first[0].frame.to_rack(Vector(0, 0, 0)).X
+            support_rear = first[0].frame.to_rack(Vector(first[0].length, 0, 0)).X
+            if first[0] in self.floor.segments.values() and support_rear < self.depth - 1:
+                support_rear -= self.floor.splice.zone
+            xa = max(front_x, support_front) + 2
+            xb = min(back_x - 4, support_rear - c - 2)
+            tab = lid.TAB_LENGTH if xb - xa >= 2 * lid.TAB_LENGTH + 8 else SHORT_TAB_LENGTH
+            spans: list[tuple[float, float, float]] = []
+            """(x0, x1, detent drop or 0)."""
+            start = xa
+            if plate is cassette.left:
+                d0, d1 = xa, xa + toolless.DETENT_LENGTH
+                plain_room = xb - (front_x + toolless.DETENT_ARM + 6) >= tab
+                arm_end = front_x + toolless.DETENT_ARM if plain_room else xb - 2
+                lever = arm_end - (d0 + d1) / 2
+                drop = toolless.detent_drop(lever)
+                if drop < toolless.DETENT_MIN_DROP:
+                    raise ValueError(f"{cassette.name}: {plate.name} is too short for a detent arm")
+                spans.append((d0, d1, drop))
+                detent_arm = arm_end - front_x
+                start = arm_end + 6 if plain_room else xb + 1
+            end = xb - tab
+            if end >= start:
+                count = int((end - start) // MODULE_TAB_PITCH) + 1
+                if end - start >= tab + 2:
+                    count = max(count, 2)
+                step = (end - start) / (count - 1) if count > 1 else 0.0
+                spans += [(start + k * step, start + k * step + tab, 0.0) for k in range(count)]
+            if not spans or (plate is cassette.right and len(spans) < 2):
+                raise ValueError(f"{cassette.name}: {plate.name} is too short for its rail tabs")
+            placed_back = front_x
+            support: Plate | None = None
+            for x0, x1, detent in spans:
+                hit = self._support_at((x0 + x1) / 2, probe_y, z)
+                if hit is None:
+                    raise ValueError(f"{cassette.name}: nothing under {plate.name} at x = {x0:.0f} for a rail tab")
+                splate = hit[0]
+                if support is not None and splate is not support:
+                    raise ValueError(f"{cassette.name}: {plate.name}'s rail crosses a seam")
+                support = splate
+                us = sorted(u_of(v) for v in (x0, x1))
+                ahead = frame.u.X > 0  # the plate's u runs back, so its low-u end is the module's front
+                feature: Feature = toolless.DetentBump(us[0], us[1], detent, ahead) if detent else toolless.RailTab(*us)
+                region, (low, high) = feature_extent(feature, plate)
+                assert region is not None
+                if plate.blocked((region[0], 0.0, region[2], region[3]), low, high):
+                    raise ValueError(f"{cassette.name}: a rail tab on {plate.name} hits another feature")
+                plate.add(feature)
+                placed_back = max(placed_back, x1)
+                if detent:
+                    # The arm: the bottom strip, cut free by a slot open at the front edge.
+                    arm = sorted(u_of(v) for v in (front_x - 1, front_x + detent_arm))
+                    v0, v1 = toolless.DETENT_ARM_HEIGHT, toolless.DETENT_ARM_HEIGHT + toolless.DETENT_RELIEF
+                    plate.add(RectCut(arm[0], v0, arm[1], v1))
+            assert support is not None
+            # The rail in the support, from its front edge to just behind the rearmost tab; and the notch.
+            splate = support
+            rear_u = splate.frame.to_local(Vector(placed_back + c, bed_y, z)).X
+            edge_v = splate.frame.to_local(Vector(front_x, bed_y, z)).Y
+            sign = splate.frame.v.Y * inward
+            groove = toolless.RailGroove((-1.0, rear_u), edge_v, sign)
+            gregion, (glow, ghigh) = feature_extent(groove, splate)
+            # A neighbour's rail may share the groove (their plates stand back to back); nothing else may.
+            hit_other = gregion is None or _blocked_except(
+                splate, gregion, glow, ghigh, (toolless.RailGroove, toolless.ShelfSlot)
+            )
+            if hit_other:
+                raise ValueError(f"{cassette.name}: {plate.name}'s rail hits a feature in {splate.name}")
+            splate.add(groove)
+            if plate is cassette.left:
+                d0, d1, notch_drop = spans[0]
+                n = sorted(splate.frame.to_local(Vector(v, bed_y, z)).X for v in (d0 - c, d1 + c))
+                vs = sorted((edge_v - sign * c, edge_v + sign * (lid.TAB_TOP + lid.TAB_UNDERCUT + c)))
+                splate.add(RectCut(n[0], vs[0], n[1], vs[1], lid.TAB_REACH + notch_drop + c))
+
+    def _shelf_tenons(self, cassette: Cassette) -> None:
+        """Locate a drawer's shelf on its side plates: tenons up from their top edges into slots through
+        the shelf, stopping under the groove a drawer above runs in."""
+        shelf, c = cassette.shelf, lid.CLEARANCE
+        assert shelf is not None
+        reach = shelf.thickness - lid.TAB_REACH - 2 * c
+        for plate in (cassette.left, cassette.right):
+            top = plate.width
+            x0, x1 = shelf.frame.origin.X, cassette.x_back
+            # Two tenons, or one in the middle of a short shelf (a vent's or blank's).
+            for x in (x0 + 20.0, x1 - 20.0) if x1 - x0 >= 60 else ((x0 + x1) / 2,):
+                xs = (x - toolless.SHELF_TENON_LENGTH / 2, x + toolless.SHELF_TENON_LENGTH / 2)
+                us = sorted(plate.frame.to_local(Vector(v, 0, 0)).X for v in xs)
+                tenon = toolless.ShelfTenon(us[0], us[1], top, reach)
+                region, (low, high) = feature_extent(tenon, plate)
+                assert region is not None
+                if plate.blocked(region, low, high):
+                    raise ValueError(f"{cassette.name}: no room for a shelf tenon on {plate.name}")
+                plate.add(tenon)
+                corners = [
+                    shelf.frame.to_local(plate.frame.to_rack(Vector(u, top, w)))
+                    for u in us
+                    for w in (0.0, toolless.SHELF_TENON_THICKNESS)
+                ]
+                su = sorted(p.X for p in corners)
+                sv = sorted(p.Y for p in corners)
+                shelf.add(toolless.ShelfSlot(su[0] - c, sv[0] - c, su[-1] + c, sv[-1] + c))
+
     def _cassette_joints(self, cassettes: dict[tuple[int, int], Cassette]) -> Hardware:
+        if self.toolless_modules:
+            # Drawers: rails in the floor or the shelf below, nothing screwed to the chassis or neighbours.
+            # A drawer's shelf sits on tenons up from its own side plates, under the rail above it.
+            for cassette in sorted(cassettes.values(), key=lambda c: c.slot.row):
+                self._module_rails(cassette)
+                if cassette.shelf is not None:
+                    self._shelf_tenons(cassette)
+            return Hardware([])
         # Side laps have the least room (above the sled grooves), so they go first and the
         # floor/shelf/cover stations slide clear of them.
         hardware = self._side_laps(cassettes)
@@ -1141,6 +1300,23 @@ class RackChassis(Component):
         segment.set_print_up(up)
         segment.merge(ear)
         segment.print_settings = SOLID
+
+
+def _blocked_except(
+    plate: Plate, region: tuple[float, float, float, float], low: float, high: float, kind: type | tuple[type, ...]
+) -> bool:
+    """Plate.blocked, ignoring features of `kind`."""
+    u0, v0, u1, v1 = region
+    for feature in plate.features:
+        if isinstance(feature, kind):
+            continue
+        occupied, (f_low, f_high) = feature_extent(feature, plate)
+        if occupied is None:
+            continue
+        a0, b0, a1, b1 = occupied
+        if a0 < u1 and u0 < a1 and b0 < v1 and v0 < b1 and f_low < high and low < f_high:
+            return True
+    return False
 
 
 def _segment_sizes(panel: Panel) -> str:
