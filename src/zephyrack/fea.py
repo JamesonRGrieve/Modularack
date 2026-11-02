@@ -32,6 +32,7 @@ from build123d import Compound, Part, export_step
 from skfem import Basis, ElementTetP1, ElementVector, MeshTet1, asm, condense, solve
 from skfem.models.elasticity import lame_parameters, linear_elasticity
 
+from .braces import KNEE_DEPTH_FRACTION, SOCKET_HEIGHT, STRUT_DEPTH, STRUT_WIDTH, KneeBrace, anchor_height
 from .chassis import FLOOR_THICKNESS, WALL_THICKNESS, RackChassis
 from .hooks import (
     FLANGE_GAP,
@@ -51,7 +52,7 @@ from .plate import Plate, Slot, ThroughHole
 from .print_settings import PrintSettings
 from .reference import reference_builders
 from .sled import Sled
-from .standards import DRIVE_3_5, POST_INNER_EDGE_TO_HOLE
+from .standards import DRIVE_3_5, PANEL_HEIGHT_DEDUCTION, POST_INNER_EDGE_TO_HOLE, RACK_UNIT, U_HOLE_OFFSETS
 
 logger = logging.getLogger(__name__)
 
@@ -206,6 +207,15 @@ def _mesh_regions(shell: Part, core: Part, work: Path) -> tuple[dict[int, Vector
     return nodes, elements, frozenset(k for k, v in enumerate(volumes) if v in core_tags)
 
 
+@dataclass(frozen=True)
+class Springs:
+    """A strut modelled as axial springs: each part node is tied to a fixed point at the strut's far end."""
+
+    ends: list[tuple[int, Vector3]]
+    stiffness: float
+    """N/mm for the whole strut, shared equally among its springs."""
+
+
 DECK_FORMAT = ".10g"
 """CalculiX reads numbers from 20-character fields: full-precision floats like -5.349609493123235e-05
 overflow them and the card is rejected."""
@@ -221,6 +231,7 @@ def _write_deck(
     core: frozenset[int] = frozenset(),
     core_fraction: float = 1.0,
     partial: list[tuple[int, int]] | None = None,
+    springs: Springs | None = None,
 ) -> None:
     lines = ["*NODE"] + [f"{n},{x:{DECK_FORMAT}},{y:{DECK_FORMAT}},{z:{DECK_FORMAT}}" for n, (x, y, z) in nodes.items()]
     lines += ["*NSET, NSET=NALL"] + [str(n) for n in nodes]
@@ -235,11 +246,24 @@ def _write_deck(
         lines += ["*ELSET, ELSET=CORE"] + [str(k + 1) for k in sorted(core)]
         lines += ["*MATERIAL, NAME=INFILL", "*ELASTIC", f"{PLA.modulus * core_fraction},{PLA.poisson}"]
         lines += ["*SOLID SECTION, ELSET=CORE, MATERIAL=INFILL"]
+    if springs:
+        # Axial springs (a strut's stiffness), each from a part node to its own fixed ground node.
+        first_node, first_element = max(nodes) + 1, len(elements) + 1
+        lines.append("*NODE")
+        lines += [
+            f"{first_node + k},{x:{DECK_FORMAT}},{y:{DECK_FORMAT}},{z:{DECK_FORMAT}}"
+            for k, (_, (x, y, z)) in enumerate(springs.ends)
+        ]
+        lines += ["*NSET, NSET=GROUND"] + [str(first_node + k) for k in range(len(springs.ends))]
+        lines.append("*ELEMENT, TYPE=SPRINGA, ELSET=ESPRING")
+        lines += [f"{first_element + k},{node},{first_node + k}" for k, (node, _) in enumerate(springs.ends)]
+        lines += ["*SPRING, ELSET=ESPRING", "", f"{springs.stiffness / len(springs.ends):{DECK_FORMAT}}"]
     lines += [
         "*STEP",
         "*STATIC",
         "*BOUNDARY",
         *(["FIXED,1,3,0.0"] if fixed else []),
+        *(["GROUND,1,3,0.0"] if springs else []),
         *(f"{node},{dof},{dof},0.0" for node, dof in partial or []),
         "*CLOAD",
     ]
@@ -325,6 +349,7 @@ class EarProblem:
     """(node, dof) pairs held in one direction only (1-3 = u, v, w): bearing contacts."""
     layer_axis: int = 2
     """The plate-frame axis that points up in the print: w for a flat plate, u for an edge-printed one."""
+    springs: Springs | None = None
 
     def corners(self) -> set[int]:
         return {n for e in self.elements for n in e[:4]}
@@ -421,14 +446,29 @@ class Brace(StrEnum):
     """A rigid bar behind the post's flange holds every peg's and hook's tail back (rearward support)."""
     KNEE = "knee"
     """A strut from the post props the wall's bottom edge at KNEE_DEPTH of the corner's wall (upward support)."""
+    STRUT = "strut"
+    """A real knee brace: a PLA strut (STRUT_SECTION) from behind the flange at the top hole of the U below
+    to a socket on the wall's outer face at KNEE_DEPTH, as axial springs of its own stiffness."""
 
 
-KNEE_DEPTH = 0.8
+@dataclass(frozen=True)
+class StrutLayout:
+    units_below: int = 1
+    """The strut seats in the top hole of the U this many units below the chassis."""
+    socket_high: bool = False
+    """Seat the strut at the top of the wall (a steeper strut) rather than its bottom edge."""
+
+
+STRUT_SECTION = 10.0 * 12.0
+"""mm^2: the strut's cross-section."""
+KNEE_DEPTH = KNEE_DEPTH_FRACTION
 """Where the knee brace meets the wall, as a fraction of the corner's wall length."""
 BRACE_PATCH = 5.0
 
 
-def corner_problem(chassis: RackChassis, work: Path, brace: Brace = Brace.NONE) -> EarProblem:
+def corner_problem(
+    chassis: RackChassis, work: Path, brace: Brace = Brace.NONE, strut: StrutLayout | None = None
+) -> EarProblem:
     """The left one-piece corner (ear and front wall segment, printed as one) hung from its post.
 
     The rest of the chassis is a rigid lever: at the corner's cut (its splice to the next wall segment)
@@ -474,6 +514,28 @@ def corner_problem(chassis: RackChassis, work: Path, brace: Brace = Brace.NONE) 
             and abs(w - prop_w) <= BRACE_PATCH
             and -0.05 <= u <= WALL_THICKNESS + 0.05
         ]
+    springs: Springs | None = None
+    if brace is Brace.STRUT:
+        layout = strut or StrutLayout()
+        anchor = (
+            _hole_column(ear),
+            -layout.units_below * RACK_UNIT + U_HOLE_OFFSETS[-1] - PANEL_HEIGHT_DEDUCTION / 2,
+            ear.thickness + 1.5,
+        )
+        socket_w = ear.thickness + KNEE_DEPTH * segment.length
+        # The socket is on the wall's outer face, at its bottom edge or just under the chassis's top.
+        low = FLOOR_THICKNESS if not layout.socket_high else chassis.height - SOCKET_HEIGHT - 1.0
+        socket = [
+            n
+            for n, (u, v, w) in nodes.items()
+            if abs(u - WALL_THICKNESS) < 0.05
+            and low - 0.05 <= v <= low + SOCKET_HEIGHT
+            and abs(w - socket_w) <= SOCKET_HEIGHT / 2
+        ]
+        if not socket:
+            raise RuntimeError("No nodes in the strut's socket")
+        length = math.dist(anchor, (WALL_THICKNESS, low + SOCKET_HEIGHT / 2, socket_w))
+        springs = Springs([(n, anchor) for n in socket], PLA.modulus * STRUT_SECTION / length)
     # The cut face: the segment's rear end, across the wall's thickness (u in [0, WALL_THICKNESS] here).
     cut_w = ear.thickness + segment.length
     face = [n for n, (u, v, w) in nodes.items() if abs(w - cut_w) < 0.05 and -0.05 <= u <= WALL_THICKNESS + 0.05]
@@ -488,7 +550,17 @@ def corner_problem(chassis: RackChassis, work: Path, brace: Brace = Brace.NONE) 
     # tension pulling rearward, bottom pushing forward.
     for n in face:
         loads.append(([n], (0.0, 0.0, couple * (nodes[n][1] - centre) / second)))
-    return EarProblem(nodes, elements, fixed, loads, load, moment, frozenset(), partial, _layer_axis(segment))
+    return EarProblem(nodes, elements, fixed, loads, load, moment, frozenset(), partial, _layer_axis(segment), springs)
+
+
+def _hole_column(ear: Plate) -> float:
+    """The u of the ear's rack-hole column."""
+    for f in ear.features:
+        if isinstance(f, RackHook | RackPeg | SpringHook):
+            return (f.band[0] + f.band[1]) / 2
+        if isinstance(f, Slot):
+            return f.u
+    raise ValueError(f"{ear.name} has no rack mounts")
 
 
 def _tail(feature: RackHook | RackPeg | SpringHook, ear: Plate) -> tuple[tuple[float, float], float]:
@@ -501,10 +573,12 @@ def _tail(feature: RackHook | RackPeg | SpringHook, ear: Plate) -> tuple[tuple[f
     return feature.band, peg_back(ear)
 
 
-def analyse_corner(name: str, chassis: RackChassis, brace: Brace = Brace.NONE) -> EarResult:
+def analyse_corner(
+    name: str, chassis: RackChassis, brace: Brace = Brace.NONE, strut: StrutLayout | None = None
+) -> EarResult:
     with tempfile.TemporaryDirectory() as directory:
         work = Path(directory)
-        problem = corner_problem(chassis, work, brace)
+        problem = corner_problem(chassis, work, brace, strut)
         return _summarise(name, problem, *solve_calculix(problem, work))
 
 
@@ -557,7 +631,10 @@ def solve_calculix(problem: EarProblem, work: Path, second_order: bool = True) -
     fixed = [n for n in problem.fixed if n in nodes]
     partial = [(n, dof) for n, dof in problem.partial if n in nodes]
     forces = problem.nodal_forces(set(nodes))
-    _write_deck(work / "ear.inp", nodes, elements, kind, fixed, forces, partial=partial)
+    springs = problem.springs
+    if springs is not None:
+        springs = Springs([(n, end) for n, end in springs.ends if n in nodes], springs.stiffness)
+    _write_deck(work / "ear.inp", nodes, elements, kind, fixed, forces, partial=partial, springs=springs)
     subprocess.run([CCX, "-i", "ear"], cwd=work, check=True, capture_output=True, timeout=SOLVER_TIMEOUT)
     return _results(work / "ear.dat")
 
@@ -802,3 +879,40 @@ def main() -> None:
             wall.factor,
         )
     raise SystemExit(1 if failed else 0)
+
+
+@dataclass(frozen=True)
+class StrutResult:
+    design: str
+    axial_force: float
+    """N, compression, taking the side's whole share of the chassis's weight through the strut."""
+    stress: float
+    buckling_load: float
+
+    @property
+    def strength_factor(self) -> float:
+        return PLA.in_layer_strength / self.stress
+
+    @property
+    def buckling_factor(self) -> float:
+        return self.buckling_load / self.axial_force
+
+    @property
+    def passes(self) -> bool:
+        return min(self.strength_factor, self.buckling_factor) >= SAFETY_FACTOR
+
+
+def knee_brace_strut(name: str, chassis: RackChassis) -> StrutResult:
+    """The knee brace's strut in closed form: compression along the layers, and Euler buckling as a
+    pinned-pinned column (conservative: its ends seat in a hole and a pocket)."""
+    brace = chassis.children[f"{chassis.name}_left_knee_brace"]
+    assert isinstance(brace, KneeBrace)
+    rise = brace.floor_top + SOCKET_HEIGHT / 2 - anchor_height(brace.units_below)
+    run = brace.socket_x - brace.post_face_x
+    length = math.hypot(rise, run)
+    load = chassis_mass(chassis) * GRAVITY / 2
+    force = load * length / rise
+    thickness = STRUT_DEPTH * run / length  # the bar's depth across its own axis
+    area = STRUT_WIDTH * thickness
+    second_moment = min(STRUT_WIDTH * thickness**3, thickness * STRUT_WIDTH**3) / 12
+    return StrutResult(name, force, force / area, math.pi**2 * PLA.modulus * second_moment / length**2)

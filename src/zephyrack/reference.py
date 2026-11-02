@@ -26,9 +26,19 @@ COLUMNS_3_5_19_INCH = (0, 4, 8)
 COLUMNS_2_5_19_INCH = (0, 3, 6, 9)
 
 
-def chassis_19_inch(units: int, ear_style: EarStyle = EarStyle.SCREW) -> RackChassis:
+def chassis_19_inch(
+    units: int, ear_style: EarStyle = EarStyle.SCREW, one_piece: bool = False, knee_brace_units: int | None = None
+) -> RackChassis:
     """Even rows: three 3.5 in bays. Odd rows: four 2.5 in bays. ATX board behind."""
-    chassis = RackChassis(RACK_19_INCH, units, DEPTH_19_INCH, ATX, ear_style=ear_style)
+    chassis = RackChassis(
+        RACK_19_INCH,
+        units,
+        DEPTH_19_INCH,
+        ATX,
+        ear_style=ear_style,
+        one_piece=one_piece,
+        knee_brace_units=knee_brace_units,
+    )
     for row in range(units):
         if row % 2 == 0:
             for column in COLUMNS_3_5_19_INCH:
@@ -40,9 +50,19 @@ def chassis_19_inch(units: int, ear_style: EarStyle = EarStyle.SCREW) -> RackCha
     return chassis
 
 
-def chassis_10_inch(units: int, ear_style: EarStyle = EarStyle.SCREW) -> RackChassis:
+def chassis_10_inch(
+    units: int, ear_style: EarStyle = EarStyle.SCREW, one_piece: bool = False, knee_brace_units: int | None = None
+) -> RackChassis:
     """Each row: one bay (3.5 in on even rows, 2.5 in on odd) with a vent beside it. Mini-ITX board behind."""
-    chassis = RackChassis(RACK_10_INCH, units, DEPTH_10_INCH, MINI_ITX, ear_style=ear_style)
+    chassis = RackChassis(
+        RACK_10_INCH,
+        units,
+        DEPTH_10_INCH,
+        MINI_ITX,
+        ear_style=ear_style,
+        one_piece=one_piece,
+        knee_brace_units=knee_brace_units,
+    )
     for row in range(units):
         bay = chassis.add_module(DriveBay(DRIVE_3_5 if row % 2 == 0 else DRIVE_2_5), 0, row)
         chassis.add_module(Vent(), bay.columns, row, GRID_COLUMNS - bay.columns)
@@ -69,6 +89,9 @@ def reference_builders() -> dict[str, Callable[[], Component]]:
     builders["chassis_19in_1U_hook"] = partial(chassis_19_inch, 1, EarStyle.HOOK)
     builders["chassis_10in_1U_snap"] = partial(chassis_10_inch, 1, EarStyle.SNAP)
     builders["chassis_19in_1U_snap"] = partial(chassis_19_inch, 1, EarStyle.SNAP)
+    # The strongest two-post set-ups: one-piece upright corners propped by knee braces.
+    builders["chassis_19in_1U_snap_braced"] = partial(chassis_19_inch, 1, EarStyle.SNAP, True, 2)
+    builders["chassis_10in_2U_screw_braced"] = partial(chassis_10_inch, 2, EarStyle.SCREW, True, 1)
     builders[f"rack_10in_{RACK_10_INCH_UNITS}U"] = printed_rack_10_inch
     builders[f"rack_19in_{RACK_19_INCH_UNITS}U"] = printed_rack_19_inch
     return builders

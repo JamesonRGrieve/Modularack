@@ -309,6 +309,8 @@ class RectCut(Feature):
     v1: float
     depth: float | None = None
     """None cuts through the plate."""
+    from_bed: bool = False
+    """Cut the pocket in from the bed face (w = 0) instead of the top face."""
 
     def shape(self, plate: Plate) -> Part:
         t = plate.thickness
@@ -318,9 +320,8 @@ class RectCut(Feature):
         if self.depth is None:
             box = Pos((self.u0 + self.u1) / 2, (self.v0 + self.v1) / 2, t / 2) * Box(du, dv, t + 2)
         else:
-            box = Pos((self.u0 + self.u1) / 2, (self.v0 + self.v1) / 2, t - self.depth / 2 + 0.5) * Box(
-                du, dv, self.depth + 1
-            )
+            centre = self.depth / 2 - 0.5 if self.from_bed else t - self.depth / 2 + 0.5
+            box = Pos((self.u0 + self.u1) / 2, (self.v0 + self.v1) / 2, centre) * Box(du, dv, self.depth + 1)
         if plate.print_up is None:
             return box
         return box.fuse(self._roof(plate)).clean()
@@ -338,6 +339,8 @@ class RectCut(Feature):
         rise = 1.0 if sign else -1.0
         if self.depth is None:
             section = [(ceiling, -1.0), (ceiling, t + 1), (ceiling + rise * (t + 2) / 2, t / 2)]
+        elif self.from_bed:
+            section = [(ceiling, self.depth), (ceiling, -1.0), (ceiling + rise * (self.depth + 1), -1.0)]
         else:
             floor = t - self.depth
             section = [(ceiling, floor), (ceiling, t + 1), (ceiling + rise * (self.depth + 1), t + 1)]
@@ -503,8 +506,10 @@ def feature_extent(
     """The (u, v) rectangle and w range a feature occupies, for collision checks."""
     t = plate.thickness
     match feature:
-        case RectCut(u0=u0, v0=v0, u1=u1, v1=v1, depth=depth):
-            return (u0, v0, u1, v1), (0.0 if depth is None else t - depth, t + 1)
+        case RectCut(u0=u0, v0=v0, u1=u1, v1=v1, depth=depth, from_bed=from_bed):
+            if depth is None:
+                return (u0, v0, u1, v1), (-1.0, t + 1)
+            return (u0, v0, u1, v1), (-1.0, depth) if from_bed else (t - depth, t + 1)
         case ThroughHole(u=u, v=v, diameter=d, countersink_diameter=c):
             r = max(d, c) / 2
             return (u - r, v - r, u + r, v + r), (-1.0, t + 1)

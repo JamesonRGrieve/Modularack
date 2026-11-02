@@ -25,6 +25,7 @@ from enum import StrEnum
 
 from build123d import Part, Vector
 
+from .braces import KNEE_DEPTH_FRACTION, KneeBrace, socket_for
 from .cassette import (
     SHELF_THICKNESS,
     SIDE_THICKNESS,
@@ -131,6 +132,9 @@ class RackChassis(Component):
     """SSI EEB/CEB alternate locations (F', H', ...) the chosen board uses, added to its legacy holes."""
     ear_style: EarStyle = EarStyle.SCREW
     one_piece: bool = False
+    knee_brace_units: int | None = None
+    """Prop each side wall with a knee brace (`braces`) from the top hole of the U this many units below
+    (1 or 2; 2 is much stiffer). Those units' hole columns must be free. None: no braces."""
     """Print each ear and the front segment of its side wall as one upright piece, with no joint between them."""
     placements: list[Placement] = field(default_factory=list)
 
@@ -583,7 +587,30 @@ class RackChassis(Component):
                 self._merge_corner(ear, wall, edge)
             else:
                 hardware.items += edge_joint(ear, wall, edge).items
+            if self.knee_brace_units is not None:
+                self._knee_brace(side, wall, edge)
         return hardware
+
+    def _knee_brace(self, side: str, wall: Panel, edge: Edge) -> None:
+        if self.knee_brace_units not in (1, 2):
+            raise ValueError(f"Knee braces anchor 1 or 2 units below, not {self.knee_brace_units}")
+        bounds = wall.u_bounds
+        front = bounds[1] - bounds[0] if edge is Edge.U0 else bounds[-1] - bounds[-2]
+        socket_x = EAR_THICKNESS + KNEE_DEPTH_FRACTION * front
+        socket_for(wall, socket_x, FLOOR_THICKNESS)
+        sign = 1.0 if side == "left" else -1.0
+        self.add_child(
+            KneeBrace(
+                f"{self.name}_{side}_knee_brace",
+                sign,
+                sign * self.width / 2,
+                sign * self.rack.hole_spacing / 2,
+                EAR_THICKNESS,
+                socket_x,
+                FLOOR_THICKNESS,
+                self.knee_brace_units,
+            )
+        )
 
     def _merge_corner(self, ear: Plate, wall: Panel, edge: Edge) -> None:
         """Print the ear and the front segment of its side wall as one upright piece: no joint between them."""
