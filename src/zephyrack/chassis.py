@@ -20,11 +20,12 @@ from __future__ import annotations
 import math
 from collections import Counter
 from collections.abc import Callable
-from dataclasses import dataclass, field
+from dataclasses import dataclass, field, replace
 from enum import StrEnum
 
 from build123d import Part, Vector
 
+from . import lid
 from .braces import KNEE_DEPTH_FRACTION, KneeBrace, socket_for
 from .cassette import (
     SHELF_THICKNESS,
@@ -51,7 +52,7 @@ from .hooks import (
 )
 from .joints import EDGE_JOINT_END_MARGIN, Hardware, LapFastening, edge_joint, edge_positions, lap_joint
 from .layout import MK3S_BED, Bed, Panel
-from .plate import Boss, BossPocket, Edge, Frame, Plate, RectCut, Rib, Slot, ThroughHole
+from .plate import Boss, BossPocket, Edge, Feature, Frame, Plate, RectCut, Rib, Slot, ThroughHole, feature_extent
 from .print_settings import SOLID
 from .rear import TONGUE_SPACING, RearArm, RearLayout, RearPin, pockets_for
 from .rear import TOP_MARGIN as REAR_TOP_MARGIN
@@ -162,6 +163,9 @@ class RackChassis(Component):
     depths (front posts' front face to rear posts' front face, mm). None: no rear support."""
     knee_brace_units: int | None = None
     web_clamp: PostChannel | None = None
+    toolless_cover: bool = False
+    """A tool-less cover (`lid`): dovetail tabs in the side walls and a spring latch, instead of screws.
+    It prints inner face down and isn't screwed to the rear wall or the top row of modules."""
     power_supply: bool = False
     """An ATX power supply bay at the rear wall (`standards.ATX_PSU`): its rear face screws to the wall, its
     body (any length up to the spec's longest) rests between ribs on the floor beside the board, flat or on
@@ -268,6 +272,8 @@ class RackChassis(Component):
         hardware.items += self._rear_corner_joints().items
         hardware.items += self._ears().items
         self._psu_bay()
+        if self.toolless_cover:
+            self._cover_latch()
         self._place_fans(self.rear_wall, self.rear_fans, from_end=False)
         self._place_fans(self.cover, self.cover_fans, from_end=True)
         hardware.items += self._floor_cover_joints().items
@@ -376,13 +382,22 @@ class RackChassis(Component):
         )
         # The side walls run the chassis's full height, so a corner can print upright in one piece with
         # its ear (one_piece); the cover sits between them.
+        cover_frame = Frame(Vector(e, inside, h - COVER_RECESS), Vector(1, 0, 0), Vector(0, 0, -1))
+        cover_bed = self.bed
+        if self.toolless_cover:
+            # Inner face down, so the dovetails' flanks rise from the bed; the tabs stand out past the edges.
+            cover_frame = Frame(
+                Vector(e, -inside, h - COVER_RECESS - COVER_THICKNESS), Vector(1, 0, 0), Vector(0, 0, 1)
+            )
+            cover_keep_v = [(2 * inside - b, 2 * inside - a) for a, b in cover_keep_v]
+            cover_bed = replace(self.bed, margin=self.bed.margin + lid.TAB_REACH)
         self.cover = Panel(
             f"{self.name}_cover",
             d - e,
             w - 2 * t,
             COVER_THICKNESS,
-            Frame(Vector(e, inside, h - COVER_RECESS), Vector(1, 0, 0), Vector(0, 0, -1)),
-            self.bed,
+            cover_frame,
+            cover_bed,
             [],
             cover_keep_v,
             Vector(0, 0, 1),
@@ -455,6 +470,128 @@ class RackChassis(Component):
         return keep
 
     # Power supply -------------------------------------------------------------------------------------
+
+    # Tool-less cover ---------------------------------------------------------------------------------
+
+    @property
+    def _cover_floor_z(self) -> float:
+        """The cover's inner face (rack z)."""
+        return self.height - COVER_RECESS - COVER_THICKNESS
+
+    def _cover_edges(self) -> list[tuple[Panel, float, float]]:
+        """Each side: its wall, the cover's edge v and the outward direction in the cover's v."""
+        width = self.cover.width
+        return [(self.left_wall, width, 1.0), (self.right_wall, 0.0, -1.0)]
+
+    def _wall_cut(self, wall: Panel, x0: float, x1: float, feature_at: Callable[[float, float], Feature]) -> bool:
+        """Add a cut spanning rack x0..x1 above z0 to `wall`, given as `feature_at(u0, u1)` in the plate's u,
+        if it stays clear of seams and the wall's other features."""
+        us = sorted(wall.frame.to_local(Vector(x, 0, 0)).X for x in (x0, x1))
+        # Walls are never split along their height (4U is under the bed's depth), so probe at mid-height.
+        mid_u, mid_v = (us[0] + us[1]) / 2, wall.width / 2
+        half = (us[1] - us[0]) / 2 + 1
+        if wall.in_splice_zone(mid_u, mid_v, half):
+            return False
+        found = wall.segment_at(mid_u, mid_v, margin=half)
+        if found is None:
+            return False
+        plate, lu, _ = found
+        feature = feature_at(us[0] - mid_u + lu, us[1] - mid_u + lu)
+        region, (low, high) = feature_extent(feature, plate)
+        if region is None or plate.blocked(region, low, high):
+            return False
+        plate.add(feature)
+        return True
+
+    def _cover_latch(self) -> None:
+        """The spring arm at the cover's rear left corner and the pocket its tooth springs into."""
+        cover, z0 = self.cover, self._cover_floor_z
+        wall, edge_v, outward = self._cover_edges()[0]
+        tooth_x1 = self.depth - lid.TOOTH_FROM_END
+        tooth_x0 = tooth_x1 - lid.TOOTH_LENGTH
+        floor_v = z0 - FLOOR_THICKNESS
+        c = lid.CLEARANCE
+        if not self._wall_cut(wall, tooth_x0 - c, tooth_x1 + c, lambda a, b: lid.LatchPocket(a, b, floor_v)):
+            raise ValueError(f"{self.name}: no room for the cover latch's pocket in {wall.name}")
+        arm_u0 = cover.length - lid.LATCH_ARM
+        arm_v = edge_v - outward * lid.LATCH_WIDTH
+        relief_v = sorted((arm_v, arm_v - outward * lid.LATCH_RELIEF))
+        reach = lid.LATCH_ARM / 2 + 1
+        if cover.in_splice_zone(cover.length - reach, edge_v, reach):
+            raise ValueError(f"{self.name}: the cover latch's arm lands on a cover seam")
+        found = cover.segment_at(cover.length - lid.LATCH_ARM / 2, edge_v - outward * 1.0)
+        assert found is not None
+        plate, lu, lv = found
+        du, dv = lu - (cover.length - lid.LATCH_ARM / 2), lv - (edge_v - outward * 1.0)
+        plate.add(RectCut(arm_u0 + du, relief_v[0] + dv, cover.length + 1 + du, relief_v[1] + dv))
+        t0, t1 = tooth_x0 - EAR_THICKNESS + du, tooth_x1 - EAR_THICKNESS + du
+        plate.add(lid.LatchTooth(t0, t1, edge_v + dv, outward))
+
+    def _cover_tabs(self) -> None:
+        """Dovetail tabs along both cover edges, each with its groove and window in the wall."""
+        floor_v = self._cover_floor_z - FLOOR_THICKNESS
+        last = self.depth - lid.LATCH_ARM - lid.LATCH_RELIEF - 2 * lid.SLIDE - lid.STATION_MARGIN
+        x0 = EAR_THICKNESS + lid.STATION_MARGIN
+        placed = 0
+        while x0 <= last:
+            if self._cover_station(x0, floor_v):
+                placed += 1
+                x0 += lid.STATION_PITCH
+            else:
+                x0 += 1.0
+        if placed < 2:
+            raise ValueError(f"{self.name}: only {placed} tool-less cover stations fit; it needs two")
+
+    def _cover_station(self, x0: float, floor_v: float) -> bool:
+        """One tab pair at rack x0 (the tabs' front ends, locked), if both walls and the cover have room."""
+        cover, c, e = self.cover, lid.CLEARANCE, EAR_THICKNESS
+        u0, u1 = x0 - e, x0 - e + lid.TAB_LENGTH
+        targets = []
+        for wall, edge_v, outward in self._cover_edges():
+            probe_v = edge_v - outward * 1.0
+            if cover.in_splice_zone((u0 + u1) / 2, probe_v, lid.TAB_LENGTH / 2 + 1):
+                return False
+            found = cover.segment_at((u0 + u1) / 2, probe_v, margin=0.0)
+            if found is None:
+                return False
+            plate, lu, lv = found
+            du, dv = lu - (u0 + u1) / 2, lv - probe_v
+            if not (u0 + du > 0 and u1 + du < plate.length):
+                return False
+            tab = lid.CoverTab(u0 + du, u1 + du, edge_v + dv, outward)
+            region, (low, high) = feature_extent(tab, plate)
+            assert region is not None
+            inner = (region[0], max(region[1], 0.0), region[2], min(region[3], plate.width))
+            if plate.blocked(inner, low, high):
+                return False
+            targets.append((wall, plate, tab))
+        lock = (x0 - c, x0 + lid.TAB_LENGTH + c)
+        window = (lock[1], lock[1] + lid.SLIDE)
+        cuts: list[tuple[Panel, Plate, Feature]] = []
+        for wall, _, _ in targets:
+            us = sorted(wall.frame.to_local(Vector(x, 0, 0)).X for x in (lock[0], window[1]))
+            mid_u, mid_v = (us[0] + us[1]) / 2, wall.width / 2
+            half = (us[1] - us[0]) / 2 + 1
+            if wall.in_splice_zone(mid_u, mid_v, half):
+                return False
+            found = wall.segment_at(mid_u, mid_v, margin=half)
+            if found is None:
+                return False
+            plate, lu, _ = found
+
+            def local(x: float, wall: Panel = wall, shift: float = lu - mid_u) -> float:
+                return wall.frame.to_local(Vector(x, 0, 0)).X + shift
+
+            socket = lid.TabSocket((local(lock[0]), local(lock[1])), (local(window[0]), local(window[1])), floor_v)
+            region, (low, high) = feature_extent(socket, plate)
+            if region is None or plate.blocked(region, low, high):
+                return False
+            cuts.append((wall, plate, socket))
+        for _, plate, tab in targets:
+            plate.add(tab)
+        for _, plate, cut in cuts:
+            plate.add(cut)
+        return True
 
     def _psu_layout(self) -> PsuLayout | None:
         """Where the power supply sits: beside the board, at the left wall, flat if it fits, else on its side."""
@@ -561,6 +698,9 @@ class RackChassis(Component):
             # An I/O aperture can take most of a narrow rear wall; its corners then carry the joint.
             minimum = 1 if wall is self.rear_wall and self.motherboard is not None else None
             hardware.items += edge_joint(self.floor, wall, Edge.V0, minimum=minimum).items
+        if self.toolless_cover:
+            self._cover_tabs()
+            return hardware
         # The cover sits on the rear wall and between the side walls, which screw into its edges.
         hardware.items += edge_joint(self.cover, self.rear_wall, Edge.V1, minimum=1 if self.motherboard else None).items
         # The cover is as thin as the floor (a 1U row must still take a 3.5 in sled): captive nuts, not inserts.
@@ -584,7 +724,9 @@ class RackChassis(Component):
             above: Panel | Plate = self.cover if cassette.shelf is None else cassette.shelf
             for plate in (cassette.left, cassette.right):
                 hardware.items += edge_joint(below, plate, Edge.V0).items
-                hardware.items += edge_joint(above, plate, Edge.V1, _offset_stations(plate.length)).items
+                # A tool-less cover lifts off: the top row is held by its floor joints and side laps.
+                if not (self.toolless_cover and above is self.cover):
+                    hardware.items += edge_joint(above, plate, Edge.V1, _offset_stations(plate.length)).items
         return hardware
 
     def _lap_z(self, *cassettes: Cassette) -> float | None:
