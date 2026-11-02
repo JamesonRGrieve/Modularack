@@ -228,6 +228,22 @@ plastic orthotropic, 60 % as stiff across the layers as along them. That moves l
 and raises the same ear's across-layer factor from x2.4 to x2.7, so the isotropic result is the
 conservative one.
 
+**Tool-less joints** (`uv run python -m zephyrack.joint_fea`). Each joint is solved in CalculiX in its
+print frame, with stresses peaked over 1 mm^3 rather than the ears' 45 mm^3, since a tab is only about
+160 mm^3. The demand is the whole chassis hanging on the floor's tabs, shared evenly; the cover is
+pulled straight up with 200 N. Worst factors at x2 over every tool-less box (10 in and 19 in, 1U to 4U):
+
+| Joint | Load path | Capacity per tab | Worst case | Factor |
+|---|---|---|---|---|
+| Wall tab (on the floor) | the floor hangs on its 45 degree flank | 161-166 N (85 N in an upright one-piece corner) | 19 in 4U, 16.9 N a tab | x20 |
+| Floor lip over the tab | bent up, across the floor's layers | 33 N | 19 in 4U, 16.9 N a tab | x3.9 |
+| Wall lip over a cover tab | the cover pulled up | 78-82 N | 10 in, 25 N a tab | x6.2 |
+
+The floor's lip is the weak side, as expected for a lip loaded across its layers. The latch arms bend in
+their plate's plane: FEA puts the cover arm at 1.15 % strain (closed form 1.16 %) and the rear arm at
+1.13 % (1.22 %), under PLA's 2 %. In a tool-less box the ears are 3 mm longer: the 19 in 1U screw ear goes
+from x3.13 / x2.44 to x2.86 / x2.52, and wall bending stays x3.3.
+
 **Server rails.** A Dell R720 (29.5 kg) on a pair of rails at their longest span, half its weight as a
 point load at mid-span (worse than its spread weight): bending x30, splice pins x6.0, sag 0.28 mm with
 `Sacrifice.UNIT`; bending x16, pins x3.5, sag 0.73 mm with `Sacrifice.HOLE`. A pair of rails carries

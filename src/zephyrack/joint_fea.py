@@ -29,6 +29,7 @@ from . import lid, toolless
 from .chassis import RackChassis
 from .fea import (
     GRAVITY,
+    PLA,
     SAFETY_FACTOR,
     EarProblem,
     EarResult,
@@ -203,6 +204,97 @@ def cover_lip_problem(chassis: RackChassis, work: Path) -> EarProblem:
     )
 
 
+@dataclass(frozen=True)
+class LatchResult:
+    latch: str
+    closed_form_strain: float
+    fea_strain: float
+    """Peak von Mises stress over modulus, the arm bent by the force the closed form says moves the tooth
+    its full travel."""
+    free_end_deflection: float
+    """mm the arm's free end moves (past the tooth, so more than the tooth's travel)."""
+    travel: float
+
+
+def _latch_force(width: float, thickness: float, lever: float, travel: float) -> float:
+    """The tip force that bends a cantilever of that section and length by `travel`."""
+    second_moment = thickness * width**3 / 12
+    return 3 * PLA.modulus * second_moment * travel / lever**3
+
+
+def cover_latch_problem(chassis: RackChassis, work: Path) -> tuple[EarProblem, float]:
+    """The cover's latch arm in a slice of the cover, held where the slice joins the rest of the cover;
+    the wall pushes its tooth inward."""
+    plate, tooth = _first(chassis, lid.LatchTooth, ["cover"])
+    assert isinstance(tooth, lid.LatchTooth)
+    t, o = plate.thickness, tooth.outward
+    root = plate.length - lid.LATCH_ARM
+    u0 = max(root - SLICE_MARGIN, 0.0)
+    inner = tooth.edge_v - o * (lid.LATCH_WIDTH + lid.LATCH_RELIEF + SLICE_MARGIN)
+    v0, v1 = sorted((inner, tooth.edge_v + o * (lid.TOOTH + 1)))
+    export_step(plate.body() & _box(u0, v0, -1, plate.length + 1, v1, t + 1), work / "part.step")
+    nodes, elements, _ = _mesh(work / "part.step", work, JOINT_MESH_SIZE)
+    face_v = tooth.edge_v + o * lid.TOOTH
+    face = [
+        n
+        for n, (u, v, w) in nodes.items()
+        if tooth.u0 - 0.01 <= u <= tooth.u1 + 0.01 and abs(v - face_v) < ON_SURFACE and w >= lid.TOOTH - 0.01
+    ]
+    fixed = [n for n, (u, v, _) in nodes.items() if u <= u0 + ON_SURFACE or abs(v - inner) < ON_SURFACE]
+    lever = plate.length - lid.TOOTH_FROM_END - lid.TOOTH_LENGTH / 2 - root
+    travel = lid.TOOTH + lid.CLEARANCE
+    force = _latch_force(lid.LATCH_WIDTH, t, lever, travel)
+    loads = [(face, (0.0, -o * force, 0.0))]
+    problem = EarProblem(
+        nodes, elements, fixed, loads, force, 0.0, layer_axis=_layer_axis(plate), peak_volume=JOINT_PEAK_VOLUME
+    )
+    return problem, travel
+
+
+def rear_latch_problem(chassis: RackChassis, work: Path) -> tuple[EarProblem, float]:
+    """One of the rear wall's latch arms, held below its root; the side wall pushes its tooth inward."""
+    plate, tooth = _first(chassis, toolless.SideTooth, ["rear_wall"])
+    assert isinstance(tooth, toolless.SideTooth)
+    t, o = plate.thickness, tooth.outward
+    inner = tooth.edge_u - o * (toolless.REAR_ARM_WIDTH + toolless.REAR_ARM_RELIEF + SLICE_MARGIN)
+    u0, u1 = sorted((inner, tooth.edge_u + o * (toolless.REAR_TOOTH + 1)))
+    export_step(plate.body() & _box(u0, -1, -1, u1, plate.width + 1, t + 1), work / "part.step")
+    nodes, elements, _ = _mesh(work / "part.step", work, JOINT_MESH_SIZE)
+    face_u = tooth.edge_u + o * toolless.REAR_TOOTH
+    face = [
+        n
+        for n, (u, v, w) in nodes.items()
+        if tooth.v0 + toolless.REAR_TOOTH - 0.01 <= v <= tooth.v1 + 0.01 and abs(u - face_u) < ON_SURFACE
+    ]
+    fixed = [n for n, (u, v, _) in nodes.items() if abs(u - inner) < ON_SURFACE or v <= ON_SURFACE - 0.0]
+    lever = (tooth.v0 + tooth.v1) / 2 - toolless.REAR_ARM_ROOT
+    travel = toolless.REAR_TOOTH + lid.CLEARANCE
+    force = _latch_force(toolless.REAR_ARM_WIDTH, toolless.REAR_TOOTH_THICKNESS, lever, travel) + _latch_force(
+        toolless.REAR_ARM_WIDTH, t - toolless.REAR_TOOTH_THICKNESS, lever, travel
+    )
+    loads = [(face, (-o * force, 0.0, 0.0))]
+    problem = EarProblem(
+        nodes, elements, fixed, loads, force, 0.0, layer_axis=_layer_axis(plate), peak_volume=JOINT_PEAK_VOLUME
+    )
+    return problem, travel
+
+
+def analyse_latches(name: str, chassis: RackChassis) -> list[LatchResult]:
+    results = []
+    cases = (
+        ("cover", cover_latch_problem, lid.latch_strain()),
+        ("rear", rear_latch_problem, toolless.rear_latch_strain(chassis.rear_wall.width)),
+    )
+    for latch, build, closed in cases:
+        with tempfile.TemporaryDirectory() as tmp:
+            work = Path(tmp)
+            problem, travel = build(chassis, work)
+            displacement, stresses = solve_calculix(problem, work)
+            summary = _summarise(f"{name} {latch} latch", problem, displacement, stresses)
+        results.append(LatchResult(latch, closed, summary.in_layer / PLA.modulus, displacement, travel))
+    return results
+
+
 def analyse_dovetails(name: str, chassis: RackChassis) -> list[JointResult]:
     results = []
     need = demand(chassis)
@@ -246,6 +338,11 @@ def main() -> None:
             print(
                 f"{design:32} {r.joint:9} {r.demand_n:7.1f} {e.in_layer:9.2f} "
                 f"{max(e.interlayer_shear, e.interlayer_combined):8.2f} {r.capacity_n:11.0f} {r.factor:7.1f}"
+            )
+        for latch in analyse_latches(design, chassis):
+            print(
+                f"{design:32} {latch.latch} latch: strain {latch.fea_strain:.2%} FEA vs {latch.closed_form_strain:.2%} "
+                f"closed form; free end moves {latch.free_end_deflection:.2f} mm for {latch.travel:.2f} mm at the tooth"
             )
 
 

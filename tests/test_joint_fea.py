@@ -7,7 +7,7 @@ from pathlib import Path
 import pytest
 
 from zephyrack.fea import SAFETY_FACTOR
-from zephyrack.joint_fea import analyse_dovetails, cover_lip_problem, lip_problem, tab_problem
+from zephyrack.joint_fea import analyse_dovetails, analyse_latches, cover_lip_problem, lip_problem, tab_problem
 from zephyrack.reference import chassis_19_inch
 
 
@@ -32,3 +32,10 @@ def test_the_floor_dovetails_hold_the_chassis_at_twice_its_weight(chassis) -> No
         assert result.result.max_displacement < 0.5
     # The floor's lip, bent up across its layers, is the weaker side of the joint.
     assert results["lip"].factor < results["tab"].factor
+
+
+def test_the_latch_arms_strain_as_the_closed_form_says(chassis) -> None:  # type: ignore[no-untyped-def]
+    for latch in analyse_latches("19in 1U", chassis):
+        assert latch.fea_strain < 0.02
+        assert latch.fea_strain == pytest.approx(latch.closed_form_strain, rel=0.15)
+        assert latch.free_end_deflection > latch.travel
