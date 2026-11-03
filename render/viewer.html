@@ -92,7 +92,7 @@ VIEWS.forEach(([name, direction, up], index) => {
   const x = column * VIEW_SIZE;
   const y = height - TITLE_HEIGHT - (row + 1) * (VIEW_SIZE + LABEL_HEIGHT);
   const camera = new THREE.OrthographicCamera(-radius * MARGIN, radius * MARGIN, radius * MARGIN,
-                                              -radius * MARGIN, 0.1, radius * 10);
+                                              -radius * MARGIN, radius * 0.01, radius * 10);
   camera.up.set(...up);
   camera.position.copy(centre).addScaledVector(new THREE.Vector3(...direction).normalize(), radius * 4);
   camera.lookAt(centre);
