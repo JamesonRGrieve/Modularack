@@ -17,6 +17,7 @@ from __future__ import annotations
 
 import json
 import os
+import shlex
 import subprocess
 import xml.etree.ElementTree as ElementTree
 from collections import defaultdict
@@ -28,6 +29,8 @@ import numpy as np
 from .fea import PLA, SOLVER_TIMEOUT, EarProblem, Material
 
 MICROMAMBA = os.environ.get("ZEPHYRACK_MICROMAMBA", "micromamba")
+PODMAN = shlex.split(os.environ.get("ZEPHYRACK_PODMAN", "podman"))
+"""The podman command, flags included (`--root`/`--runroot` pick a store)."""
 FENICSX_ENV = os.environ.get("ZEPHYRACK_FENICSX_ENV", "zephyrack-fenicsx")
 CODE_ASTER_IMAGE = os.environ.get("ZEPHYRACK_CODE_ASTER_IMAGE", "docker.io/simvia/code_aster:stable")
 ELMER_IMAGE = os.environ.get("ZEPHYRACK_ELMER_IMAGE", "docker.io/openeuler/elmer:latest")
@@ -96,7 +99,10 @@ def run_fenicsx(problem: LinearProblem, work: Path, material: Material = PLA) ->
 
 
 def _podman(image: str, work: Path, script: str) -> list[str]:
-    return ["podman", "run", "--rm", "--user", "0", "-v", f"{work}:{CONTAINER_WORKDIR}:Z", image, "bash", "-c", script]
+    # The solvers need no network, and a host without /dev/net/tun (an LXC container) can't give a
+    # rootless container one.
+    volume = f"{work}:{CONTAINER_WORKDIR}:Z"
+    return [*PODMAN, "run", "--rm", "--network", "none", "--user", "0", "-v", volume, image, "bash", "-c", script]
 
 
 def run_code_aster(problem: LinearProblem, work: Path, material: Material = PLA) -> Solution:
