@@ -4,7 +4,7 @@
 import pytest
 
 from zephyrack.checks import check
-from zephyrack.coupons import COUPON_NOTES, Coupon, CouponSet
+from zephyrack.coupons import COUPON_NOTES, Coupon, CouponSet, SledCoupon
 
 
 @pytest.fixture(scope="module")
@@ -18,7 +18,11 @@ def test_every_coupon_prints_alone_and_the_pairs_mate(coupons: CouponSet) -> Non
 
 
 def test_every_fit_has_its_coupon_and_its_instructions(coupons: CouponSet) -> None:
-    names = {c.name.removesuffix("_a").removesuffix("_b") for c in coupons.children.values() if isinstance(c, Coupon)}
+    names = {
+        c.name.removesuffix("_a").removesuffix("_b")
+        for c in coupons.children.values()
+        if isinstance(c, Coupon | SledCoupon)
+    }
     assert names == set(COUPON_NOTES)
 
 

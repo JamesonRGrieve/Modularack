@@ -265,6 +265,8 @@ class DriveFormFactor:
     """Side hole centre above the drive's base."""
     screw: str
     screw_clearance: float
+    side_hole_minor: float = 0.0
+    """The tapped side hole's smallest minor diameter: what a printed pin must pass."""
 
 
 # SFF-8301 Rev 1.9 Table 3-1: A3 width, A1 height (1 in class), A2 length max, A8 and A8+A9
@@ -278,6 +280,7 @@ DRIVE_3_5 = DriveFormFactor(
     side_hole_height=6.35,
     screw="6-32 UNC x 1/4 in pan head",
     screw_clearance=3.66,  # close fit for #6 (0.144 in)
+    side_hole_minor=2.642,  # 6-32 UNC-2B internal minor diameter, minimum 0.1040 in (ASME B1.1)
 )
 # SFF-8201 Rev 3.4 Table 3-1: A4 width, A1 height (15 mm class), A6 length max, A52/A53 side holes
 # from the connector end, A23 hole height, M3 thread.
@@ -290,6 +293,7 @@ DRIVE_2_5 = DriveFormFactor(
     side_hole_height=3.0,
     screw="M3x4 pan head (ISO 7045)",
     screw_clearance=3.4,
+    side_hole_minor=2.459,  # M3 6H internal minor diameter, minimum (ISO 965-1)
 )
 # SFF-8201 Rev 3.4 Table 3-1 A1 heights; the outline and side holes are the same for every height.
 DRIVE_2_5_9_5MM = replace(DRIVE_2_5, name="2.5in-9.5mm", height=9.5)

@@ -218,6 +218,8 @@ class DriveBay(ModuleKind):
     drive: DriveFormFactor
     rows: int = 1
     levels: int | None = None
+    pinned: bool = False
+    """Tool-less sleds (`sled.SledGeometry.pinned`): printed pins into the drive's side holes, no screws."""
     pass_through: SataAdapter | None = None
     """A SATA pass-through adapter behind each sled (`passthrough`): the rear stop becomes a backplane."""
 
@@ -253,7 +255,9 @@ class DriveBay(ModuleKind):
         return wanted
 
     def sled_geometry(self, slot: CassetteSlot) -> SledGeometry:
-        return SledGeometry(self.drive, slot.inner_width + 2 * (GROOVE_DEPTH - SLED_SIDE_CLEARANCE), GROOVE_DEPTH)
+        return SledGeometry(
+            self.drive, slot.inner_width + 2 * (GROOVE_DEPTH - SLED_SIDE_CLEARANCE), GROOVE_DEPTH, self.pinned
+        )
 
     def groove_top(self, row_height: float) -> float:
         top_level = self.levels_in(row_height) - 1
@@ -306,7 +310,8 @@ class DriveBay(ModuleKind):
         cassette.add_child(stop)
         hardware = edge_joint(stop, cassette.left, Edge.U1)
         hardware.items += edge_joint(stop, cassette.right, Edge.U0).items
-        hardware.items += [f"{self.drive.screw}"] * (4 * sleds)
+        if not self.pinned:
+            hardware.items += [f"{self.drive.screw}"] * (4 * sleds)
         return hardware
 
     def _backplane(

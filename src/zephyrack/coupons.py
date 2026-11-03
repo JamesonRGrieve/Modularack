@@ -5,8 +5,9 @@ Every coupon is a box cut from a plate of a reference chassis, in that plate's o
 exactly the geometry the full part has; placed at the plate's position, each pair assembles mated. Print
 a pair, try the fit, and adjust the clearance named on its sheet entry (`COUPON_NOTES`).
 
-The tool-less coupons come from a 19 in 2U tool-less box (flat-printed walls), the screwed edge joint
-from the screwed 19 in 2U, and the SATA collar from a bay with the placeholder adapter.
+The tool-less coupons come from a 19 in 2U tool-less box (flat-printed walls), the drawer rail from a
+19 in 1U with drawers, the sled pin from a pinned 3.5 in sled, the screwed edge joint from the screwed
+19 in 2U, and the SATA collar from a bay with the placeholder adapter.
 """
 
 from __future__ import annotations
@@ -23,6 +24,7 @@ from .passthrough import PLACEHOLDER_ADAPTER
 from .plate import Edge, EdgeInsert, Plate, RectCut, Rib
 from .print_settings import PrintSettings
 from .reference import COLUMNS_3_5_19_INCH, DEPTH_19_INCH, chassis_19_inch
+from .sled import DRIVE_SIDE_CLEARANCE, PIN_ENGAGE, Sled
 from .standards import ATX, DRIVE_3_5, RACK_19_INCH
 
 MARGIN = 10.0
@@ -41,6 +43,9 @@ COUPON_NOTES = {
     "drawer_rail": "Slide the side-plate strip into the floor strip's rail from its front edge: the tabs should "
     "run freely, the detent click into its notch, and lifting the arm's front end release it. Tune "
     "lid.CLEARANCE and toolless.DETENT_DROP.",
+    "sled_pin": "Press a 3.5 in drive's side hole onto the pin from below: the skin should spring aside and "
+    "the pin snap into the hole and carry the drive; pushing the drive up should free it. Tune "
+    "sled.PIN_CLEARANCE and sled.PIN_ENGAGE.",
     "edge_insert": "Press two M3x5.7 inserts into the wall's bottom edge and screw the floor strip on with "
     "M3 countersunk screws. Tune fasteners.EDGE_INSERT.",
     "sata_collar": "Press the adapter into the collar with its male side through the window; it should sit "
@@ -70,6 +75,24 @@ class Coupon(Component):
         return {"part": self.part}
 
 
+class SledCoupon(Component):
+    """A box cut from a sled (one solid, printed in its own frame), placed where the sled is."""
+
+    def __init__(self, name: str, sled: Sled, box: tuple[float, float, float, float, float, float]) -> None:
+        super().__init__(name)
+        x0, y0, z0, x1, y1, z1 = box
+        cut = Pos((x0 + x1) / 2, (y0 + y1) / 2, (z0 + z1) / 2) * Box(x1 - x0, y1 - y0, z1 - z0)
+        solids = (sled.solids()["part"] & cut).solids()
+        if len(solids) != 1:
+            raise ValueError(f"{name}: the cut from {sled.name} falls into {len(solids)} pieces")
+        self.part = Part(solids[0].wrapped)
+        self.placement = sled.placement
+        self.print_location = sled.print_location
+
+    def solids(self) -> dict[str, Part]:
+        return {"part": self.part}
+
+
 def _first(panel: Panel, kind: type, where: object = None) -> tuple[Plate, object]:
     for plate in panel.segments.values():
         for feature in plate.features:
@@ -87,6 +110,7 @@ class CouponSet(Component):
         self._cover_latch(box)
         self._rear(box)
         self._drawer(chassis_19_inch(1, toolless_box=True, toolless_modules=True))
+        self._sled_pin()
         self._edge_insert(chassis_19_inch(2))
         self._sata_collar()
         screw = screw_length(FLOOR_THICKNESS, EDGE_INSERT.length, EDGE_INSERT_RELIEF_DEPTH)
@@ -214,6 +238,20 @@ class CouponSet(Component):
             (wall, (u0, 0.0, u1, 20.0)),
             (fplate, (lo, edge - 2 * MARGIN - WALL_THICKNESS, hi, min(edge, fplate.width))),
         )
+
+    def _sled_pin(self) -> None:
+        chassis = RackChassis(RACK_19_INCH, 1, DEPTH_19_INCH, ATX, toolless_sleds=True)
+        chassis.add_module(DriveBay(DRIVE_3_5, levels=1), COLUMNS_3_5_19_INCH[0], 0)
+        chassis.build()
+        sled = next(d for d in chassis.descendants() if isinstance(d, Sled))
+        g = sled.geometry
+        # The y = 0 rail around its front pin arm, with the pin standing out of its inner face.
+        x, inner_y, inward, _ = min((a for a in g.pin_arms() if a[2] > 0), key=lambda a: a[0])
+        lo, hi = next(span for span in g.pin_arm_spans() if span[0] <= x <= span[1])
+        reach = DRIVE_SIDE_CLEARANCE + PIN_ENGAGE + 1
+        # Stop short of the detent arm's slot behind the pin arm, or its stub would print as a loose piece.
+        box = (lo - 4, -1.0, -1.0, hi + 1, inner_y + inward * reach, g.rail_height + 1)
+        self.add_child(SledCoupon("sled_pin", sled, box))
 
     def _sata_collar(self) -> None:
         chassis = RackChassis(RACK_19_INCH, 1, DEPTH_19_INCH, ATX)

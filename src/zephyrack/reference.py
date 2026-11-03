@@ -38,6 +38,7 @@ def chassis_19_inch(
     toolless_cover: bool = False,
     toolless_box: bool = False,
     toolless_modules: bool = False,
+    toolless_sleds: bool = False,
 ) -> RackChassis:
     """Even rows: three 3.5 in bays. Odd rows: four 2.5 in bays. ATX board behind."""
     chassis = RackChassis(
@@ -51,6 +52,7 @@ def chassis_19_inch(
         toolless_cover=toolless_cover,
         toolless_box=toolless_box,
         toolless_modules=toolless_modules,
+        toolless_sleds=toolless_sleds,
     )
     for row in range(units):
         if row % 2 == 0:
@@ -71,6 +73,7 @@ def chassis_10_inch(
     toolless_cover: bool = False,
     toolless_box: bool = False,
     toolless_modules: bool = False,
+    toolless_sleds: bool = False,
 ) -> RackChassis:
     """Each row: one bay (3.5 in on even rows, 2.5 in on odd) with a vent beside it. Mini-ITX board behind."""
     chassis = RackChassis(
@@ -84,6 +87,7 @@ def chassis_10_inch(
         toolless_cover=toolless_cover,
         toolless_box=toolless_box,
         toolless_modules=toolless_modules,
+        toolless_sleds=toolless_sleds,
     )
     for row in range(units):
         bay = chassis.add_module(DriveBay(DRIVE_3_5 if row % 2 == 0 else DRIVE_2_5), 0, row)
@@ -156,11 +160,20 @@ def reference_builders() -> dict[str, Callable[[], Component]]:
     # Tool-less boxes: walls on floor dovetails, a latched rear wall, a sliding latched cover.
     builders["chassis_10in_2U_toolless"] = partial(chassis_10_inch, 2, EarStyle.HOOK, True, toolless_box=True)
     builders["chassis_19in_2U_toolless"] = partial(chassis_19_inch, 2, EarStyle.SNAP, toolless_box=True)
+    # Fully tool-less: one-piece hook corners (braced two units down for a two-post rack), and no screws
+    # between panels, in the modules or on the drives.
     builders["chassis_19in_2U_drawers"] = partial(
-        chassis_19_inch, 2, EarStyle.SNAP, toolless_box=True, toolless_modules=True
+        chassis_19_inch,
+        2,
+        EarStyle.HOOK,
+        True,
+        2,
+        toolless_box=True,
+        toolless_modules=True,
+        toolless_sleds=True,
     )
     builders["chassis_10in_2U_drawers"] = partial(
-        chassis_10_inch, 2, EarStyle.HOOK, True, toolless_box=True, toolless_modules=True
+        chassis_10_inch, 2, EarStyle.HOOK, True, toolless_box=True, toolless_modules=True, toolless_sleds=True
     )
     builders["chassis_19in_1U_toolless"] = partial(chassis_19_inch, 1, EarStyle.HOOK, True, 2, toolless_box=True)
     builders["chassis_19in_3U_psu"] = chassis_19_inch_powered

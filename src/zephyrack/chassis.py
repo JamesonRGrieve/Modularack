@@ -33,6 +33,7 @@ from .cassette import (
     Blank,
     Cassette,
     CassetteSlot,
+    DriveBay,
     ModuleKind,
     cells_for,
 )
@@ -175,6 +176,8 @@ class RackChassis(Component):
     """Front modules as drawers (`toolless`): dovetail tabs on their side plates slide in rails from the
     floor's (or the shelf's) front edge, and a sprung detent holds them home. No screws hold them in, and
     they come out with the cover on. Shelves thicken to the floor's thickness to take the rails."""
+    toolless_sleds: bool = False
+    """Drive sleds hold their drives on printed pins (`sled`) instead of four screws each."""
     toolless_cover: bool = False
     """A tool-less cover (`lid`): dovetail tabs in the side walls and a spring latch, instead of screws.
     It prints inner face down and isn't screwed to the rear wall or the top row of modules."""
@@ -333,7 +336,10 @@ class RackChassis(Component):
         cassettes: dict[tuple[int, int], Cassette] = {}
         for placement in sorted(self.placements, key=lambda p: (p.row, p.column)):
             name = f"{self.name}_r{placement.row}c{placement.column}"
-            cassette = Cassette(name, placement.kind, self._slot(placement))
+            kind = placement.kind
+            if self.toolless_sleds and isinstance(kind, DriveBay):
+                kind = replace(kind, pinned=True)
+            cassette = Cassette(name, kind, self._slot(placement))
             if placement.row + placement.kind.rows < self.units:
                 cassette.add_shelf(self.shelf_thickness)
             cassettes[(placement.row, placement.column)] = cassette

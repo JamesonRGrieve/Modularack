@@ -65,6 +65,16 @@ drive dimensions, the SFF-8323 / SFF-8223 drive connector position, and fan scre
   - Shelves thicken to 7 mm to take the rails, and sit on tenons up from their own module's side plates.
   - A short module (a vent or blank) gets short tabs and a detent sized to its arm.
 
+  With `toolless_sleds=True` the drive sleds take no screws:
+  - A printed pin on a sprung skin of each rail sits in each of the drive's side holes.
+  - Each pin is flat on top, where the drive hangs, and comes to a 45 degree point underneath. Press the
+    drive up between the rails from below, and push it up and out to remove it: about 20 N for four pins,
+    over twice a 3.5 in drive's weight.
+
+  With one-piece hook or snap corners (`one_piece=True`), nothing joins an ear to its wall and nothing
+  needs a tool to rack the chassis: `chassis_19in_2U_drawers` and `chassis_10in_2U_drawers` are fully
+  tool-less. In a two-post rack those ears want a brace (see Strength).
+
   To open, reverse it: press the cover's arm in, slide the cover back and lift; press each rear arm's
   top end in and lift the rear wall; slide the side walls forward and lift. The side walls stand 3 mm in
   from the floor's edges, so the floor keeps a solid lip outboard of each groove. The ears, the panel
@@ -227,7 +237,10 @@ scikit-fem, FEniCSx (micromamba env `zephyrack-fenicsx`), Code_Aster (`simvia/co
 and Elmer (`openeuler/elmer` container). All five give the same displacement (19 in 1U ear:
 0.1852 mm); the four element-stress codes agree on stress to four figures (18.79 MPa in-layer,
 8.206 MPa interlayer shear), and Elmer's nodal-averaged stresses to within 10 %. The design
-is judged on CalculiX's second-order (C3D10) solution.
+is judged on CalculiX's second-order (C3D10) solution. `ZEPHYRACK_MICROMAMBA` names the micromamba
+binary, and `ZEPHYRACK_PODMAN` the podman command, flags included (for example
+`podman --root /var/lib/zephyrack-containers --runroot /run/zephyrack-containers` to keep the images
+on a local disk).
 
 **Material and layer stiffness.** `--material petg` swaps in Prusament PETG (data sheet v1.1: 47 MPa
 printed tensile, 1.5 GPa, 18 MPa interlayer adhesion). The 19 in 1U screw ear goes from x3.1 / x2.4 to
@@ -251,6 +264,7 @@ pulled straight up with 200 N. Worst factors at x2 over every tool-less box (10 
 Drawer rails (`toolless_modules`), with the heaviest module lifted at 1 g, as if the chassis were turned
 over: each rail tab carries 143 N at x2 against about 1.4 N, and the floor's rail lip 50 N (x74 at
 worst). The detent arm strains 0.64 % by FEA (0.50 % closed form; the slot's root concentrates it).
+A sled's pin arm strains 0.93 % by FEA (1.14 % closed form).
 
 The floor's lip is the weak side, as expected for a lip loaded across its layers. The latch arms bend in
 their plate's plane: FEA puts the cover arm at 1.15 % strain (closed form 1.16 %) and the rear arm at
@@ -308,6 +322,7 @@ pair assembles mated:
 | `rear_latch_a/b` | lower the rear-wall end against the side-wall strip: the tooth clicks in and holds; press the arm's top to release | `toolless.REAR_TOOTH` |
 | `rear_tenon_a/b` | the tenon drops into its floor pocket without play | `lid.CLEARANCE` |
 | `drawer_rail_a/b` | slide the side-plate strip into the rail from the front: the tabs run freely, the detent clicks into its notch, and lifting the arm's front end releases it | `lid.CLEARANCE`, `toolless.DETENT_DROP` |
+| `sled_pin` | press a 3.5 in drive's side hole onto the pin from below: the skin springs aside and the pin snaps in and carries the drive; pushing the drive up frees it | `sled.PIN_CLEARANCE`, `sled.PIN_ENGAGE` |
 | `edge_insert_a/b` | press two M3x5.7 inserts into the wall's edge and screw the floor strip on | `fasteners.EDGE_INSERT` |
 | `sata_collar` | press the adapter into the collar, male side through the window | `passthrough.SataAdapter` (measure yours first) |
 

@@ -26,6 +26,7 @@ from pathlib import Path
 from build123d import Box, Part, Pos, export_step
 
 from . import lid, toolless
+from . import sled as sl
 from .cassette import Cassette
 from .chassis import RackChassis
 from .fea import (
@@ -445,6 +446,49 @@ def detent_problem(chassis: RackChassis, work: Path) -> tuple[EarProblem, float,
     return problem, travel, toolless.detent_strain(lever, bump.drop)
 
 
+def pin_arm_problem(chassis: RackChassis, work: Path) -> tuple[EarProblem, float, float]:
+    """A pinned sled's front pin arm, in a slice of its rail held at the rail's outer face and beyond the
+    arm's root; the drive pushes the pin out by its travel. The sled prints in its own frame, z up."""
+    sled = next(d for d in chassis.descendants() if isinstance(d, Sled) and d.geometry.pinned)
+    g = sled.geometry
+    x, inner_y, inward, free = min(g.pin_arms(), key=lambda a: (a[0], a[2]))
+    root = g.pin_arm_root(x, free)
+    toward_root = 1.0 if root > free else -1.0
+    x0, x1 = sorted((free - 2 * toward_root, root + 6 * toward_root))
+    outer_y = inner_y - inward * g.rail_width
+    y0, y1 = sorted((outer_y, inner_y + inward * (sl.DRIVE_SIDE_CLEARANCE + sl.PIN_ENGAGE + 1)))
+    export_step(sled.solids()["part"] & _box(x0, y0, -1, x1, y1, g.rail_height + 1), work / "part.step")
+    nodes, elements, _ = _mesh(work / "part.step", work, JOINT_MESH_SIZE)
+    tip_y = inner_y + inward * (sl.DRIVE_SIDE_CLEARANCE + sl.PIN_ENGAGE)
+    tip = [n for n, (_, y, _) in nodes.items() if abs(y - tip_y) < ON_SURFACE]
+    far = x1 if root > free else x0
+    fixed = [n for n, (px, y, _) in nodes.items() if abs(y - outer_y) < ON_SURFACE or abs(px - far) < ON_SURFACE]
+    lever = abs(root - x)
+    travel = sl.PIN_ENGAGE + sl.PIN_CLEARANCE
+    # The skin bends across its 1.6 mm, over the rail's full height.
+    force = _latch_force(sl.PIN_ARM_SKIN, g.rail_height, lever, travel)
+    problem = EarProblem(
+        nodes,
+        elements,
+        fixed,
+        [(tip, (0.0, -inward * force, 0.0))],
+        force,
+        0.0,
+        layer_axis=2,
+        peak_volume=JOINT_PEAK_VOLUME,
+    )
+    return problem, travel, sl.pin_arm_strain()
+
+
+def analyse_pin_arm(name: str, chassis: RackChassis) -> LatchResult:
+    with tempfile.TemporaryDirectory() as tmp:
+        work = Path(tmp)
+        problem, travel, closed = pin_arm_problem(chassis, work)
+        displacement, stresses = solve_calculix(problem, work)
+        summary = _summarise(f"{name} pin arm", problem, displacement, stresses)
+    return LatchResult("sled pin", closed, summary.in_layer / PLA.modulus, displacement, travel)
+
+
 def analyse_rails(name: str, chassis: RackChassis) -> tuple[list[JointResult], LatchResult]:
     need = rail_demand(chassis)
     results = []
@@ -490,7 +534,9 @@ def main() -> None:
     args = parser.parse_args()
     builders = reference_builders()
     sweep = {
-        f"{label}_{units}U_toolless_box": partial(build, units, toolless_box=True, toolless_modules=True)
+        f"{label}_{units}U_toolless_box": partial(
+            build, units, toolless_box=True, toolless_modules=True, toolless_sleds=True
+        )
         for label, build in (("chassis_10in", chassis_10_inch), ("chassis_19in", chassis_19_inch))
         for units in range(1, 5)
     }
@@ -516,6 +562,11 @@ def main() -> None:
                 )
             print(
                 f"{design:32} detent: strain {detent.fea_strain:.2%} FEA vs {detent.closed_form_strain:.2%} closed form"
+            )
+        if chassis.toolless_sleds:
+            pin = analyse_pin_arm(design, chassis)
+            print(
+                f"{design:32} sled pin arm: strain {pin.fea_strain:.2%} FEA vs {pin.closed_form_strain:.2%} closed form"
             )
         for latch in analyse_latches(design, chassis):
             print(

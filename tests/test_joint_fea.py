@@ -10,6 +10,7 @@ from zephyrack.fea import SAFETY_FACTOR
 from zephyrack.joint_fea import (
     analyse_dovetails,
     analyse_latches,
+    analyse_pin_arm,
     analyse_rails,
     cover_lip_problem,
     lip_problem,
@@ -57,3 +58,9 @@ def test_drawer_rails_and_detent_hold_a_module_lifted_at_1g() -> None:
     assert detent.fea_strain < 0.02
     # The closed form misses the slot root's concentration, but stays within 40 %.
     assert detent.fea_strain == pytest.approx(detent.closed_form_strain, rel=0.4)
+
+
+def test_a_sled_pin_arm_strains_no_more_than_the_closed_form_says() -> None:
+    sleds = chassis_19_inch(1, toolless_sleds=True)
+    pin = analyse_pin_arm("19in 1U", sleds)
+    assert pin.fea_strain < pin.closed_form_strain < 0.02
