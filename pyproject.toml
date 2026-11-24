@@ -1,5 +1,5 @@
 [project]
-name = "zephyrack"
+name = "modularack"
 version = "0.0.1"
 description = "Modular, 3D-printable rack system for 10 in and 19 in racks"
 license = "AGPL-3.0-or-later"
@@ -15,9 +15,13 @@ dependencies = [
     "scikit-fem>=10",
 ]
 
+[project.urls]
+Homepage = "https://modularack.dev"
+Source = "https://github.com/JamesonRGrieve/Modularack"
+
 [project.scripts]
-zephyrack-build = "zephyrack.build:main"
-zephyrack-fea = "zephyrack.fea:main"
+modularack-build = "modularack.build:main"
+modularack-fea = "modularack.fea:main"
 
 [build-system]
 requires = ["uv_build>=0.11.16,<0.12.0"]

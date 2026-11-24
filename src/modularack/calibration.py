@@ -11,7 +11,7 @@ and write the result in.
 Page 2 is for numbers a photo can't give: caliper readings for a SATA pass-through adapter (see
 `passthrough.SataAdapter`) and the fit of each coupon (see `coupons`). Photograph it filled in.
 
-`uv run python -m zephyrack.calibration` writes A4 and US Letter PDFs to build/calibration/.
+`uv run python -m modularack.calibration` writes A4 and US Letter PDFs to build/calibration/.
 """
 
 from __future__ import annotations
@@ -112,7 +112,7 @@ def _grid_page(page: PageSize) -> bytes:
     gx, gy = grid_origin(page)
     top = page.height - MARGIN
     c.gray(0.0, stroke=False)
-    c.text(MARGIN, top - 6, 14, "Zephyrack measuring sheet", bold=True)
+    c.text(MARGIN, top - 6, 14, "Modularack measuring sheet", bold=True)
     c.text(
         MARGIN, top - 12, 8, "Print at 100 % (Actual size, no scaling). Check the grid's size with calipers before use."
     )
@@ -200,7 +200,7 @@ def _record_page(page: PageSize) -> bytes:
     c = _Canvas()
     top = page.height - MARGIN
     c.gray(0.0, stroke=False)
-    c.text(MARGIN, top - 6, 14, "Zephyrack measurement record", bold=True)
+    c.text(MARGIN, top - 6, 14, "Modularack measurement record", bold=True)
     c.text(
         MARGIN,
         top - 12,

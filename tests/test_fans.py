@@ -3,13 +3,13 @@
 
 import pytest
 
-from zephyrack.chassis import RackChassis
-from zephyrack.checks import check
-from zephyrack.fans import FanBay, FanPlate
-from zephyrack.layout import MK3S_BED
-from zephyrack.printability import fits_bed, overhangs
-from zephyrack.reference import DEPTH_19_INCH
-from zephyrack.standards import ATX, FAN_SCREW_CLEARANCE, FANS, RACK_19_INCH
+from modularack.chassis import RackChassis
+from modularack.checks import check
+from modularack.fans import FanBay, FanPlate
+from modularack.layout import MK3S_BED
+from modularack.printability import fits_bed, overhangs
+from modularack.reference import DEPTH_19_INCH
+from modularack.standards import ATX, FAN_SCREW_CLEARANCE, FANS, RACK_19_INCH
 
 
 @pytest.mark.parametrize("size", sorted(FANS))

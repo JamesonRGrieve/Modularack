@@ -1,7 +1,7 @@
 # SPDX-License-Identifier: AGPL-3.0-or-later
 """Build the reference set.
 
-`uv run zephyrack-build [output_dir] [name ...]` writes, for each reference design:
+`uv run modularack-build [output_dir] [name ...]` writes, for each reference design:
 
 - `stl/<part>.stl`: every printable part, already in its print orientation;
 - `<design>.step`: the assembly;

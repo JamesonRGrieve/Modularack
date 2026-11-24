@@ -3,8 +3,8 @@
 
 import pytest
 
-from zephyrack.checks import check
-from zephyrack.coupons import COUPON_NOTES, Coupon, CouponSet, SledCoupon
+from modularack.checks import check
+from modularack.coupons import COUPON_NOTES, Coupon, CouponSet, SledCoupon
 
 
 @pytest.fixture(scope="module")

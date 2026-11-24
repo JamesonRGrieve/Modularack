@@ -6,7 +6,7 @@ and rear-right isometrics, front, rear, top and side views with a real depth buf
 lighting and feature edges only (creases over 25 degrees, never tessellation seams).
 
 Needs Node and the render/ package installed (`pnpm install` in render/), and a Chromium build:
-the newest in the Playwright cache, or ZEPHYRACK_CHROMIUM.
+the newest in the Playwright cache, or MODULARACK_CHROMIUM.
 """
 
 from __future__ import annotations
@@ -19,7 +19,7 @@ from pathlib import Path
 from build123d import Compound, Part, export_gltf
 
 RENDER_DIR = Path(__file__).resolve().parents[2] / "render"
-NODE = os.environ.get("ZEPHYRACK_NODE", "node")
+NODE = os.environ.get("MODULARACK_NODE", "node")
 RENDER_TIMEOUT = 600
 GLTF_LINEAR_DEFLECTION = 0.05
 GLTF_ANGULAR_DEFLECTION = 0.2

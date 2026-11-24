@@ -6,14 +6,14 @@ without interference."""
 import pytest
 from build123d import Vector
 
-from zephyrack.cassette import DriveBay, Vent
-from zephyrack.chassis import EAR_HOLES_PER_UNIT, EAR_THICKNESS, SEAM_STAGGER, RackChassis
-from zephyrack.checks import check
-from zephyrack.plate import Boss, Plate, Slot
-from zephyrack.rack import PrintedRack
-from zephyrack.reference import reference_builders
-from zephyrack.sled import Sled
-from zephyrack.standards import (
+from modularack.cassette import DriveBay, Vent
+from modularack.chassis import EAR_HOLES_PER_UNIT, EAR_THICKNESS, SEAM_STAGGER, RackChassis
+from modularack.checks import check
+from modularack.plate import Boss, Plate, Slot
+from modularack.rack import PrintedRack
+from modularack.reference import reference_builders
+from modularack.sled import Sled
+from modularack.standards import (
     ATX,
     DRIVE_2_5_7MM,
     DRIVE_3_5,

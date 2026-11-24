@@ -1,8 +1,8 @@
 # SPDX-License-Identifier: AGPL-3.0-or-later
 """Linear elasticity on a given P1 tetrahedral mesh with nodal forces, solved in FEniCSx.
 
-Runs inside the FEniCSx environment, not the Zephyrack one:
-    micromamba run -n zephyrack-fenicsx python fenicsx_linear_elasticity.py problem.npz result.json
+Runs inside the FEniCSx environment, not the Modularack one:
+    micromamba run -n modularack-fenicsx python fenicsx_linear_elasticity.py problem.npz result.json
 
 problem.npz holds points (N, 3), tets (E, 4), fixed (node indices), force_nodes and forces (K, 3),
 modulus and poisson. The result is the largest displacement and the per-cell stress

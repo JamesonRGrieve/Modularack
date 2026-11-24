@@ -7,13 +7,13 @@ import bd_warehouse.fastener as bdw
 import pytest
 from build123d import Box, BuildPart, GeomType, Location, Locations, Pos, Vector
 
-from zephyrack.fasteners import INSERT_M3_LONG, INSERT_M3_SHORT, M3_CLEARANCE, screw_length
-from zephyrack.joints import LapFastening, edge_joint, lap_joint, nut_lap_fit
-from zephyrack.layout import Bed, Panel, plan_seams
-from zephyrack.plate import Edge, EdgeInsert, Frame, Plate, ThroughHole, teardrop_prism
-from zephyrack.printability import overhangs
-from zephyrack.sled import FRONT_BAR_THICKNESS, Sled, SledGeometry
-from zephyrack.standards import DRIVE_2_5, DRIVE_3_5
+from modularack.fasteners import INSERT_M3_LONG, INSERT_M3_SHORT, M3_CLEARANCE, screw_length
+from modularack.joints import LapFastening, edge_joint, lap_joint, nut_lap_fit
+from modularack.layout import Bed, Panel, plan_seams
+from modularack.plate import Edge, EdgeInsert, Frame, Plate, ThroughHole, teardrop_prism
+from modularack.printability import overhangs
+from modularack.sled import FRONT_BAR_THICKNESS, Sled, SledGeometry
+from modularack.standards import DRIVE_2_5, DRIVE_3_5
 
 
 @pytest.mark.parametrize(("spec", "size"), [(INSERT_M3_LONG, "M3-0.5-5.7"), (INSERT_M3_SHORT, "M3-0.5-3")])

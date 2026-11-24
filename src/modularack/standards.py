@@ -1,5 +1,5 @@
 # SPDX-License-Identifier: AGPL-3.0-or-later
-"""Published dimensional standards Zephyrack parts are built against, in millimetres.
+"""Published dimensional standards Modularack parts are built against, in millimetres.
 
 Every value here comes from a cited source. Part code imports these instead of
 restating numbers, so a correction lands in one place.

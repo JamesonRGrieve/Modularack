@@ -7,7 +7,7 @@ import numpy as np
 from build123d import Box
 from matplotlib.image import imread
 
-from zephyrack.render import render_views
+from modularack.render import render_views
 
 MODEL_PIXELS = 2000
 """Shaded pixels a six-view sheet of a cube shows at least; a blank sheet (white, black labels) has none."""

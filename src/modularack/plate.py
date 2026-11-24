@@ -1,5 +1,5 @@
 # SPDX-License-Identifier: AGPL-3.0-or-later
-"""Flat plates: the one kind of printed part every Zephyrack structure is made of.
+"""Flat plates: the one kind of printed part every Modularack structure is made of.
 
 A plate lives in its own frame (u, v, w): it spans u in [0, length], v in [0, width],
 w in [0, thickness]. That frame *is* the print orientation: w = 0 is the face on the

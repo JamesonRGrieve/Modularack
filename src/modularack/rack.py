@@ -3,7 +3,7 @@
 
 Each side is a front post, an optional rear post and a side panel between them; a base
 and a top tie the two sides together. Posts carry the EIA-310 hole pattern with captive
-M6 nuts on their inner faces, so standard rack screws (or Zephyrack ears) fasten to them.
+M6 nuts on their inner faces, so standard rack screws (or Modularack ears) fasten to them.
 
 Posts are taller than a printer bed, so they are printed in segments of whole U. The
 segments butt end to end and are carried by the side panel, whose own seams are kept

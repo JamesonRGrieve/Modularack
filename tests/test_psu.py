@@ -3,12 +3,12 @@
 
 import pytest
 
-from zephyrack.cassette import DriveBay
-from zephyrack.chassis import WALL_THICKNESS, RackChassis
-from zephyrack.checks import check
-from zephyrack.plate import RectCut, Rib, ThroughHole
-from zephyrack.reference import COLUMNS_3_5_19_INCH, DEPTH_19_INCH
-from zephyrack.standards import ATX, ATX_PSU, DRIVE_3_5, MINI_ITX, RACK_19_INCH, MotherboardFormFactor
+from modularack.cassette import DriveBay
+from modularack.chassis import WALL_THICKNESS, RackChassis
+from modularack.checks import check
+from modularack.plate import RectCut, Rib, ThroughHole
+from modularack.reference import COLUMNS_3_5_19_INCH, DEPTH_19_INCH
+from modularack.standards import ATX, ATX_PSU, DRIVE_3_5, MINI_ITX, RACK_19_INCH, MotherboardFormFactor
 
 
 def _chassis(board: MotherboardFormFactor | None, units: int) -> RackChassis:

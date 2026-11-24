@@ -6,8 +6,8 @@ from pathlib import Path
 
 import pytest
 
-from zephyrack.build import bill_of_materials
-from zephyrack.fea import (
+from modularack.build import bill_of_materials
+from modularack.fea import (
     SAFETY_FACTOR,
     _mesh_regions,
     ear_as_printed,
@@ -16,10 +16,10 @@ from zephyrack.fea import (
     wall_as_printed,
     wall_bending,
 )
-from zephyrack.infill import split, wall_section_modulus
-from zephyrack.plate import Plate
-from zephyrack.print_settings import PRUSA_MK3_QUALITY, SOLID, STRUCTURAL
-from zephyrack.reference import chassis_10_inch, chassis_19_inch
+from modularack.infill import split, wall_section_modulus
+from modularack.plate import Plate
+from modularack.print_settings import PRUSA_MK3_QUALITY, SOLID, STRUCTURAL
+from modularack.reference import chassis_10_inch, chassis_19_inch
 
 
 def _ear(units: int = 1) -> Plate:

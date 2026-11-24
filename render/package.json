@@ -1,8 +1,8 @@
 {
-  "name": "zephyrack-render",
+  "name": "modularack-render",
   "version": "0.0.1",
   "private": true,
-  "description": "Headless three.js renderer for Zephyrack inspection views",
+  "description": "Headless three.js renderer for Modularack inspection views",
   "license": "AGPL-3.0-or-later",
   "type": "module",
   "devDependencies": {

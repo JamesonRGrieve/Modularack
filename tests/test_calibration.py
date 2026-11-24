@@ -5,7 +5,7 @@ import re
 
 import pytest
 
-from zephyrack.calibration import A4, LETTER, MARKER, MM, PageSize, grid_origin, marker_centres, pdf
+from modularack.calibration import A4, LETTER, MARKER, MM, PageSize, grid_origin, marker_centres, pdf
 
 PRINTABLE_MARGIN = 8.0
 """mm: most printers can't print the outer 3-6 mm of a sheet."""

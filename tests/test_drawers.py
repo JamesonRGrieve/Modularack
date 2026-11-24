@@ -4,12 +4,12 @@
 import pytest
 from build123d import Part, Pos
 
-from zephyrack import lid, toolless
-from zephyrack.cassette import Cassette
-from zephyrack.chassis import RackChassis
-from zephyrack.checks import check
-from zephyrack.plate import Feature, Plate
-from zephyrack.reference import chassis_10_inch, chassis_19_inch
+from modularack import lid, toolless
+from modularack.cassette import Cassette
+from modularack.chassis import RackChassis
+from modularack.checks import check
+from modularack.plate import Feature, Plate
+from modularack.reference import chassis_10_inch, chassis_19_inch
 
 
 @pytest.fixture(scope="module")

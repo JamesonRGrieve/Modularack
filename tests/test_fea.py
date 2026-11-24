@@ -1,15 +1,15 @@
 # SPDX-License-Identifier: AGPL-3.0-or-later
 """Strength checks on the worst real mounting: a loaded chassis hung from its front ears (two-post).
 
-Needs gmsh and CalculiX (ZEPHYRACK_GMSH / ZEPHYRACK_CCX); the CAD SOP records the desktop installs.
+Needs gmsh and CalculiX (MODULARACK_GMSH / MODULARACK_CCX); the CAD SOP records the desktop installs.
 """
 
 from pathlib import Path
 
 import pytest
 
-from zephyrack.crosscheck import LinearProblem, run_code_aster, run_elmer, run_fenicsx
-from zephyrack.fea import (
+from modularack.crosscheck import LinearProblem, run_code_aster, run_elmer, run_fenicsx
+from modularack.fea import (
     PETG,
     SAFETY_FACTOR,
     _summarise,
@@ -19,7 +19,7 @@ from zephyrack.fea import (
     solve_calculix,
     wall_bending,
 )
-from zephyrack.reference import chassis_10_inch, chassis_19_inch
+from modularack.reference import chassis_10_inch, chassis_19_inch
 
 
 def test_the_19_inch_1u_ear_holds_twice_its_two_post_load() -> None:

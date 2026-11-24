@@ -3,13 +3,13 @@
 
 import pytest
 
-from zephyrack.chassis import EarStyle, RackChassis
-from zephyrack.checks import check
-from zephyrack.fea import GRAVITY, SAFETY_FACTOR, chassis_mass
-from zephyrack.printability import overhangs
-from zephyrack.rear import OVERLAP, PIN_PITCH_FRONT, PIN_PITCH_REAR, RearLayout
-from zephyrack.standards import RACK_19_INCH
-from zephyrack.web import PostChannel, WebClamp, clamp_reaction
+from modularack.chassis import EarStyle, RackChassis
+from modularack.checks import check
+from modularack.fea import GRAVITY, SAFETY_FACTOR, chassis_mass
+from modularack.printability import overhangs
+from modularack.rear import OVERLAP, PIN_PITCH_FRONT, PIN_PITCH_REAR, RearLayout
+from modularack.standards import RACK_19_INCH
+from modularack.web import PostChannel, WebClamp, clamp_reaction
 
 
 def _rear_chassis(span: tuple[float, float]) -> RackChassis:

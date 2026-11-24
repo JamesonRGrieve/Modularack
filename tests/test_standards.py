@@ -3,7 +3,7 @@ from itertools import pairwise
 
 import pytest
 
-from zephyrack.standards import (
+from modularack.standards import (
     ATX,
     CEB,
     DRIVE_2_5,

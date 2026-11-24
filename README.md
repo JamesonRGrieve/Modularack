@@ -1,4 +1,4 @@
-# Zephyrack
+# Modularack
 
 A modular rack system you can print on a 250 x 210 mm bed: 1U to 4U chassis for 10 in
 (micro) and 19 in (full-size) racks, hot-swap drive bays, motherboard and power supply mounts,
@@ -8,7 +8,7 @@ between parts comes apart again: a screw you can undo, or for square-hole racks 
 spring catch, and a cover that slides off without tools.
 
 Built in [build123d](https://github.com/gumyr/build123d). Every dimension is a parameter,
-and the published standards it builds against live in `src/zephyrack/standards.py` with
+and the published standards it builds against live in `src/modularack/standards.py` with
 their sources: EIA-310 rack holes, the Intel ATX / microATX / Mini-ITX mounting holes and
 I/O aperture, the ATX12V power supply's rear face, the SFF-8301 (3.5 in) and SFF-8201 (2.5 in)
 drive dimensions, the SFF-8323 / SFF-8223 drive connector position, and fan screw spacings.
@@ -111,7 +111,7 @@ drive dimensions, the SFF-8323 / SFF-8223 drive connector position, and fan scre
   their ear holes are slotted for the variation between brands (10 in racks have no formal
   standard).
 
-`src/zephyrack/reference.py` has a reference design for every width and height.
+`src/modularack/reference.py` has a reference design for every width and height.
 
 ## How it's built
 
@@ -169,14 +169,14 @@ degree top above a flat bearing face.
 ```sh
 uv sync
 pnpm --dir render install                         # three.js renderer (headless Chromium)
-uv run zephyrack-build build                      # every reference design
-uv run zephyrack-build build chassis_19in_2U      # just one
+uv run modularack-build build                      # every reference design
+uv run modularack-build build chassis_19in_2U      # just one
 uv run pytest
 ```
 
 For each design, `build/<design>/` gets `stl/` (every part already in print orientation),
 a STEP assembly, `assembled.png` and `exploded.png` (lit six-view sheets drawn by three.js in headless
-Chromium, the newest build in the Playwright cache or `ZEPHYRACK_CHROMIUM`) and `bom.txt` (printed parts plus every
+Chromium, the newest build in the Playwright cache or `MODULARACK_CHROMIUM`) and `bom.txt` (printed parts plus every
 screw, insert and nut). `build/report.txt` summarises the checks.
 
 ## What the checks prove
@@ -194,7 +194,7 @@ cleanly in PrusaSlicer 2.9 with supports off.
 
 ## Strength
 
-`uv run zephyrack-fea` checks the worst real mounting: a fully loaded chassis hanging from its
+`uv run modularack-fea` checks the worst real mounting: a fully loaded chassis hanging from its
 two front ears in a two-post rack. Each ear is meshed with gmsh and solved in CalculiX, with
 stresses read in the ear's print frame, so tension and shear *across* the layers are reported
 separately from in-layer stress. Peaks are the stress exceeded over the most-stressed 45 mm^3
@@ -233,13 +233,13 @@ hand-tight 1 kN) holds twice that up to a 19 in 4U chassis. In a four-post rack 
 takes the overturning moment off the front ears entirely.
 
 The set-up is cross-checked by five independent codes on the same linear mesh and loads: CalculiX,
-scikit-fem, FEniCSx (micromamba env `zephyrack-fenicsx`), Code_Aster (`simvia/code_aster` container)
+scikit-fem, FEniCSx (micromamba env `modularack-fenicsx`), Code_Aster (`simvia/code_aster` container)
 and Elmer (`openeuler/elmer` container). All five give the same displacement (19 in 1U ear:
 0.1852 mm); the four element-stress codes agree on stress to four figures (18.79 MPa in-layer,
 8.206 MPa interlayer shear), and Elmer's nodal-averaged stresses to within 10 %. The design
-is judged on CalculiX's second-order (C3D10) solution. `ZEPHYRACK_MICROMAMBA` names the micromamba
-binary, and `ZEPHYRACK_PODMAN` the podman command, flags included (for example
-`podman --root /var/lib/zephyrack-containers --runroot /run/zephyrack-containers` to keep the images
+is judged on CalculiX's second-order (C3D10) solution. `MODULARACK_MICROMAMBA` names the micromamba
+binary, and `MODULARACK_PODMAN` the podman command, flags included (for example
+`podman --root /var/lib/modularack-containers --runroot /run/modularack-containers` to keep the images
 on a local disk).
 
 **Material and layer stiffness.** `--material petg` swaps in Prusament PETG (data sheet v1.1: 47 MPa
@@ -250,7 +250,7 @@ plastic orthotropic, 60 % as stiff across the layers as along them. That moves l
 and raises the same ear's across-layer factor from x2.4 to x2.7, so the isotropic result is the
 conservative one.
 
-**Tool-less joints** (`uv run python -m zephyrack.joint_fea`). Each joint is solved in CalculiX in its
+**Tool-less joints** (`uv run python -m modularack.joint_fea`). Each joint is solved in CalculiX in its
 print frame, with stresses peaked over 1 mm^3 rather than the ears' 45 mm^3, since a tab is only about
 160 mm^3. The demand is the whole chassis hanging on the floor's tabs, shared evenly; the cover is
 pulled straight up with 200 N. Worst factors at x2 over every tool-less box (10 in and 19 in, 1U to 4U):
@@ -310,7 +310,7 @@ for.
 
 ## Before you print a full set
 
-Print the coupons first: `uv run zephyrack-build build coupons` writes them to `build/coupons/stl/`. Each
+Print the coupons first: `uv run modularack-build build coupons` writes them to `build/coupons/stl/`. Each
 one is cut from a real part in its own print orientation, so it has that part's exact geometry, and each
 pair assembles mated:
 
@@ -329,7 +329,7 @@ pair assembles mated:
 Also print one sled in its bay, and an ear against your rack. The clearances are starting values; record
 what fits in the CAD SOP.
 
-**Measuring sheet:** `uv run python -m zephyrack.calibration` writes A4 and Letter PDFs to
+**Measuring sheet:** `uv run python -m modularack.calibration` writes A4 and Letter PDFs to
 `build/calibration/`.
 - Page 1 is a millimetre grid with four oriented corner markers and a corner stop. Print it at 100 %,
   check the grid with calipers, and photograph a part lying on it from straight above. The photo can then

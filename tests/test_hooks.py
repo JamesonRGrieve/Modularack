@@ -4,9 +4,9 @@
 import pytest
 from build123d import Pos
 
-from zephyrack.chassis import EarStyle, RackChassis
-from zephyrack.checks import check
-from zephyrack.hooks import (
+from modularack.chassis import EarStyle, RackChassis
+from modularack.checks import check
+from modularack.hooks import (
     HOOK_DROP,
     HOOK_PEG_HEIGHT,
     HOOK_VERTICAL_CLEARANCE,
@@ -18,9 +18,9 @@ from zephyrack.hooks import (
     hook_width,
     spring_blades,
 )
-from zephyrack.plate import Edge, EdgeInsert, Plate
-from zephyrack.reference import chassis_10_inch, chassis_19_inch
-from zephyrack.standards import RACK_10_INCH, RACK_19_INCH, RackStandard
+from modularack.plate import Edge, EdgeInsert, Plate
+from modularack.reference import chassis_10_inch, chassis_19_inch
+from modularack.standards import RACK_10_INCH, RACK_19_INCH, RackStandard
 
 
 def _ear(chassis: RackChassis, side: str = "left") -> Plate:

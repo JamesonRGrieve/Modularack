@@ -4,14 +4,14 @@
 import pytest
 from build123d import Vector
 
-from zephyrack.cassette import REAR_GAP, Cassette, DriveBay
-from zephyrack.chassis import RackChassis
-from zephyrack.checks import check
-from zephyrack.passthrough import CONNECTOR_FROM_Y_SIDE, PLACEHOLDER_ADAPTER, SataAdapter
-from zephyrack.plate import Plate, RectCut, Rib
-from zephyrack.reference import COLUMNS_2_5_19_INCH, COLUMNS_3_5_19_INCH, DEPTH_19_INCH
-from zephyrack.sled import DRIVE_SIDE_CLEARANCE, Sled
-from zephyrack.standards import ATX, DRIVE_2_5, DRIVE_2_5_7MM, DRIVE_3_5, RACK_19_INCH, DriveFormFactor
+from modularack.cassette import REAR_GAP, Cassette, DriveBay
+from modularack.chassis import RackChassis
+from modularack.checks import check
+from modularack.passthrough import CONNECTOR_FROM_Y_SIDE, PLACEHOLDER_ADAPTER, SataAdapter
+from modularack.plate import Plate, RectCut, Rib
+from modularack.reference import COLUMNS_2_5_19_INCH, COLUMNS_3_5_19_INCH, DEPTH_19_INCH
+from modularack.sled import DRIVE_SIDE_CLEARANCE, Sled
+from modularack.standards import ATX, DRIVE_2_5, DRIVE_2_5_7MM, DRIVE_3_5, RACK_19_INCH, DriveFormFactor
 
 
 def _bay(drive: DriveFormFactor, columns: tuple[int, ...], units: int = 1) -> RackChassis:

@@ -4,13 +4,13 @@
 import pytest
 from build123d import Box, Pos
 
-from zephyrack.cassette import DriveBay
-from zephyrack.chassis import RackChassis
-from zephyrack.checks import check
-from zephyrack.fea import PLA
-from zephyrack.printability import overhangs
-from zephyrack.reference import COLUMNS_2_5_19_INCH, COLUMNS_3_5_19_INCH, DEPTH_19_INCH
-from zephyrack.sled import (
+from modularack.cassette import DriveBay
+from modularack.chassis import RackChassis
+from modularack.checks import check
+from modularack.fea import PLA
+from modularack.printability import overhangs
+from modularack.reference import COLUMNS_2_5_19_INCH, COLUMNS_3_5_19_INCH, DEPTH_19_INCH
+from modularack.sled import (
     FRONT_BAR_THICKNESS,
     PIN_ARM_GAP,
     PIN_ARM_SKIN,
@@ -19,7 +19,7 @@ from zephyrack.sled import (
     pin_arm_strain,
     pin_release_force,
 )
-from zephyrack.standards import ATX, DRIVE_2_5, DRIVE_3_5, RACK_19_INCH, DriveFormFactor
+from modularack.standards import ATX, DRIVE_2_5, DRIVE_3_5, RACK_19_INCH, DriveFormFactor
 
 
 def _volume(part, box) -> float:  # type: ignore[no-untyped-def]

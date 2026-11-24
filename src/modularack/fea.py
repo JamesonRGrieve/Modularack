@@ -1,7 +1,7 @@
 # SPDX-License-Identifier: AGPL-3.0-or-later
 """Finite-element checks of the load paths that matter, with stresses read in each part's print frame.
 
-`uv run zephyrack-fea [design ...]` meshes the rack ear of each chassis with gmsh (second-order
+`uv run modularack-fea [design ...]` meshes the rack ear of each chassis with gmsh (second-order
 tetrahedra), solves it in CalculiX for the worst real mounting (a fully loaded chassis hanging
 from its two front ears in a two-post rack), and reports:
 
@@ -10,8 +10,8 @@ from its two front ears in a two-post rack), and reports:
 - the ear's deflection.
 
 The part is analysed in its print frame (bed at w = 0), so sigma_ww is tension across the layers
-and tau_uw / tau_vw are interlaminar shear. The external binaries come from ZEPHYRACK_GMSH and
-ZEPHYRACK_CCX, defaulting to the desktop installs the CAD SOP records.
+and tau_uw / tau_vw are interlaminar shear. The external binaries come from MODULARACK_GMSH and
+MODULARACK_CCX, defaulting to the desktop installs the CAD SOP records.
 """
 
 from __future__ import annotations
@@ -60,8 +60,8 @@ from .web import PostChannel
 
 logger = logging.getLogger(__name__)
 
-GMSH = os.environ.get("ZEPHYRACK_GMSH", "/opt/gmsh-4.15.2-Linux64/bin/gmsh")
-CCX = os.environ.get("ZEPHYRACK_CCX", "/opt/calculix-freecad-1.1.4/bin/ccx")
+GMSH = os.environ.get("MODULARACK_GMSH", "/opt/gmsh-4.15.2-Linux64/bin/gmsh")
+CCX = os.environ.get("MODULARACK_CCX", "/opt/calculix-freecad-1.1.4/bin/ccx")
 SOLVER_TIMEOUT = 1800
 MESH_SIZE = 1.5
 """Largest tetrahedron edge, mm."""

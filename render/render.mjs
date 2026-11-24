@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
 // Render a GLB into a six-view lit contact sheet with three.js in headless Chromium.
 //   node render.mjs <model.glb> <out.png> [title]
-// Chromium comes from ZEPHYRACK_CHROMIUM, else the newest build in the Playwright cache.
+// Chromium comes from MODULARACK_CHROMIUM, else the newest build in the Playwright cache.
 
 import { createReadStream, existsSync, readdirSync } from "node:fs";
 import { createServer } from "node:http";
@@ -16,7 +16,7 @@ const VIEW_SIZE = 640;
 const TYPES = { ".html": "text/html", ".js": "text/javascript", ".glb": "model/gltf-binary" };
 
 function chromiumPath() {
-  if (process.env.ZEPHYRACK_CHROMIUM) return process.env.ZEPHYRACK_CHROMIUM;
+  if (process.env.MODULARACK_CHROMIUM) return process.env.MODULARACK_CHROMIUM;
   // $HOME may be a per-session directory; the shared Playwright cache sits under the real home.
   const caches = [
     process.env.PLAYWRIGHT_BROWSERS_PATH,
@@ -32,7 +32,7 @@ function chromiumPath() {
       }
     }
   }
-  throw new Error(`No Chromium build in ${caches.join(", ")}; set ZEPHYRACK_CHROMIUM`);
+  throw new Error(`No Chromium build in ${caches.join(", ")}; set MODULARACK_CHROMIUM`);
 }
 
 const [modelPath, outPath, title = ""] = process.argv.slice(2);

@@ -1,5 +1,5 @@
 # SPDX-License-Identifier: AGPL-3.0-or-later
-"""The component tree every Zephyrack assembly is built from.
+"""The component tree every Modularack assembly is built from.
 
 A component owns named solids plus child components. Each component has a
 placement in its parent's frame. Exploding is computed when an assembly is

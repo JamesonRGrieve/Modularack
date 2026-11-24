@@ -6,8 +6,8 @@ from pathlib import Path
 
 import pytest
 
-from zephyrack.fea import SAFETY_FACTOR
-from zephyrack.joint_fea import (
+from modularack.fea import SAFETY_FACTOR
+from modularack.joint_fea import (
     analyse_dovetails,
     analyse_latches,
     analyse_pin_arm,
@@ -16,7 +16,7 @@ from zephyrack.joint_fea import (
     lip_problem,
     tab_problem,
 )
-from zephyrack.reference import chassis_19_inch
+from modularack.reference import chassis_19_inch
 
 
 @pytest.fixture(scope="module")

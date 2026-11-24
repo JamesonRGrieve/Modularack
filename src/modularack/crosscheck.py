@@ -28,12 +28,12 @@ import numpy as np
 
 from .fea import PLA, SOLVER_TIMEOUT, EarProblem, Material
 
-MICROMAMBA = os.environ.get("ZEPHYRACK_MICROMAMBA", "micromamba")
-PODMAN = shlex.split(os.environ.get("ZEPHYRACK_PODMAN", "podman"))
+MICROMAMBA = os.environ.get("MODULARACK_MICROMAMBA", "micromamba")
+PODMAN = shlex.split(os.environ.get("MODULARACK_PODMAN", "podman"))
 """The podman command, flags included (`--root`/`--runroot` pick a store)."""
-FENICSX_ENV = os.environ.get("ZEPHYRACK_FENICSX_ENV", "zephyrack-fenicsx")
-CODE_ASTER_IMAGE = os.environ.get("ZEPHYRACK_CODE_ASTER_IMAGE", "docker.io/simvia/code_aster:stable")
-ELMER_IMAGE = os.environ.get("ZEPHYRACK_ELMER_IMAGE", "docker.io/openeuler/elmer:latest")
+FENICSX_ENV = os.environ.get("MODULARACK_FENICSX_ENV", "modularack-fenicsx")
+CODE_ASTER_IMAGE = os.environ.get("MODULARACK_CODE_ASTER_IMAGE", "docker.io/simvia/code_aster:stable")
+ELMER_IMAGE = os.environ.get("MODULARACK_ELMER_IMAGE", "docker.io/openeuler/elmer:latest")
 CONTAINER_WORKDIR = "/work"
 FENICSX_SCRIPT = Path(__file__).parent / "external" / "fenicsx_linear_elasticity.py"
 

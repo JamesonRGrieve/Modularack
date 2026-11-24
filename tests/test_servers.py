@@ -3,9 +3,9 @@
 
 import pytest
 
-from zephyrack.checks import check
-from zephyrack.printability import overhangs
-from zephyrack.servers import (
+from modularack.checks import check
+from modularack.printability import overhangs
+from modularack.servers import (
     DELL_R720,
     PITCH_A,
     PITCH_B,

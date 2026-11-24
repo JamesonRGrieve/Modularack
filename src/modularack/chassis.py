@@ -201,7 +201,7 @@ class RackChassis(Component):
         if self.alternate_holes and self.motherboard not in (EEB, CEB):
             raise ValueError("Alternate mounting locations are defined only for SSI EEB and CEB boards")
         if not MIN_UNITS <= self.units <= MAX_UNITS:
-            raise ValueError(f"Zephyrack chassis are {MIN_UNITS}U-{MAX_UNITS}U, got {self.units}U")
+            raise ValueError(f"Modularack chassis are {MIN_UNITS}U-{MAX_UNITS}U, got {self.units}U")
         Component.__init__(self, f"chassis_{self.rack.name}_{self.units}U")
         if self.toolless_box:
             self.toolless_cover = True

@@ -4,14 +4,14 @@
 import pytest
 from build123d import Pos, Vector
 
-from zephyrack.braces import KneeBrace, anchor_height
-from zephyrack.chassis import EarStyle, RackChassis
-from zephyrack.checks import check
-from zephyrack.fea import SAFETY_FACTOR, Brace, StrutLayout, analyse_corner, knee_brace_strut
-from zephyrack.hooks import SQUARE_HOLE
-from zephyrack.printability import overhangs
-from zephyrack.reference import chassis_10_inch, chassis_19_inch
-from zephyrack.standards import RACK_19_INCH
+from modularack.braces import KneeBrace, anchor_height
+from modularack.chassis import EarStyle, RackChassis
+from modularack.checks import check
+from modularack.fea import SAFETY_FACTOR, Brace, StrutLayout, analyse_corner, knee_brace_strut
+from modularack.hooks import SQUARE_HOLE
+from modularack.printability import overhangs
+from modularack.reference import chassis_10_inch, chassis_19_inch
+from modularack.standards import RACK_19_INCH
 
 
 @pytest.mark.parametrize(
