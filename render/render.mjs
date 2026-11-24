@@ -57,7 +57,8 @@ try {
   const query = new URLSearchParams({ model: "/model.glb", title, size: String(VIEW_SIZE) });
   await page.goto(`http://127.0.0.1:${port}/viewer.html?${query}`);
   await page.waitForFunction(() => window.renderDone === true, null, { timeout: RENDER_TIMEOUT_MS });
-  await page.locator("canvas").screenshot({ path: resolve(outPath) });
+  // The scene is drawn by now; a big model in software GL can still take Playwright past its 30 s default.
+  await page.locator("canvas").screenshot({ path: resolve(outPath), timeout: RENDER_TIMEOUT_MS });
 } finally {
   await browser.close();
   server.close();

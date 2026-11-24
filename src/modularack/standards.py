@@ -58,6 +58,23 @@ RACK_10_INCH = RackStandard(
     hole_spacing=236.525,
     hole_spacing_tolerance=1.0,
 )
+RACK_14_5_INCH = RackStandard(
+    name="14.5in",
+    panel_width=368.3,  # 14.50 in
+    # No standard: Modularack's own width, a round size whose screwed box takes an ATX board across it
+    # (`chassis.board_floor_width`: 328.2 mm of floor, against 333.7 at 14.5 in; a tool-less ATX box
+    # needs 338.6, so 15 in). Ears and posts as for 19 in: hole columns 17.5 mm inside the panel's width.
+    hole_spacing=350.8,
+    hole_spacing_tolerance=1.0,
+)
+RACK_15_INCH = RackStandard(
+    name="15in",
+    panel_width=381.0,  # 15.00 in
+    # No standard: Modularack's own width, the round size whose tool-less box takes an ATX board (338.6 mm
+    # of floor against 346.4 between the posts). Ears and posts as for 19 in.
+    hole_spacing=363.5,
+    hole_spacing_tolerance=1.0,
+)
 
 
 def panel_height(units: int) -> float:
@@ -222,6 +239,18 @@ EEB = MotherboardFormFactor(
     depth=330.2,
     hole_c_from_corner=(140.97, 10.16),
     holes=_ATX_HOLES | {MountingHole.X, MountingHole.Y, MountingHole.Z},
+)
+# E-ATX has no published standard (Gamers Nexus "E-ATX is a lie"; Supermicro FAQ 31898; Corsair "SSI EEB and
+# CEB motherboards explained"): full-size E-ATX is the SSI EEB outline, 12 x 13 in, and boards sold as E-ATX
+# run from about 277 to 330 mm deep with extra holes that vary by maker. So: EEB's outline (the deepest, so a
+# chassis that takes it takes any of them) on the ATX holes every one of them has. A board that uses EEB's
+# extended row is an SSI EEB board.
+E_ATX = MotherboardFormFactor(
+    name="e-atx",
+    width=304.8,
+    depth=330.2,
+    hole_c_from_corner=(140.97, 10.16),
+    holes=_ATX_HOLES,
 )
 CEB = MotherboardFormFactor(
     name="ssi-ceb",

@@ -32,6 +32,7 @@ MICROMAMBA = os.environ.get("MODULARACK_MICROMAMBA", "micromamba")
 PODMAN = shlex.split(os.environ.get("MODULARACK_PODMAN", "podman"))
 """The podman command, flags included (`--root`/`--runroot` pick a store)."""
 FENICSX_ENV = os.environ.get("MODULARACK_FENICSX_ENV", "modularack-fenicsx")
+"""A micromamba env name, or the path of its prefix."""
 CODE_ASTER_IMAGE = os.environ.get("MODULARACK_CODE_ASTER_IMAGE", "docker.io/simvia/code_aster:stable")
 ELMER_IMAGE = os.environ.get("MODULARACK_ELMER_IMAGE", "docker.io/openeuler/elmer:latest")
 CONTAINER_WORKDIR = "/work"
@@ -93,7 +94,9 @@ def run_fenicsx(problem: LinearProblem, work: Path, material: Material = PLA) ->
         modulus=material.modulus,
         poisson=material.poisson,
     )
-    _run([MICROMAMBA, "run", "-n", FENICSX_ENV, "python", str(FENICSX_SCRIPT), "problem.npz", "fenicsx.json"], work)
+    # The env by name, or by its prefix (a path, as on a runner's shared store).
+    env = ["-p", FENICSX_ENV] if "/" in FENICSX_ENV else ["-n", FENICSX_ENV]
+    _run([MICROMAMBA, "run", *env, "python", str(FENICSX_SCRIPT), "problem.npz", "fenicsx.json"], work)
     result = json.loads((work / "fenicsx.json").read_text())
     return float(result["displacement"]), [tuple(row) for row in result["stresses"]]
 

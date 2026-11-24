@@ -5,7 +5,8 @@
 
 - `stl/<part>.stl`: every printable part, already in its print orientation;
 - `<design>.step`: the assembly;
-- `assembled.png` and `exploded.png`: lit six-view sheets (three.js in headless Chromium) to check by eye;
+- `assembled.png` and `exploded.png`: lit six-view sheets (three.js in headless Chromium) to check by eye; a
+  chassis's assembled sheet draws its board and power supply as stand-ins, in amber;
 - `bom.txt`: printed parts plus every screw, insert and nut;
 - a line in `report.txt`: bed fit, validity, support-free and interference results.
 """
@@ -19,6 +20,7 @@ from pathlib import Path
 
 from build123d import export_step, export_stl
 
+from .chassis import RackChassis
 from .checks import check
 from .component import Component
 from .reference import reference_builders
@@ -47,7 +49,9 @@ def build_design(name: str, design: Component, output_dir: Path) -> str:
         export_stl(part, stl_dir / f"{part_name}.stl")
     assembly = design.assemble()
     export_step(assembly, target / f"{name}.step")
-    render_views(assembly, target / "assembled.png", f"{name} assembled")
+    # A chassis is drawn with stand-ins for its board and power supply, in their own colour.
+    shown = design.assemble_with_bought_parts() if isinstance(design, RackChassis) else assembly
+    render_views(shown, target / "assembled.png", f"{name} assembled")
     render_views(design.assemble(EXPLODE_DISTANCE), target / "exploded.png", f"{name} exploded")
     (target / "bom.txt").write_text(bill_of_materials(design, design.hardware))
     report = check(design)

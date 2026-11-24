@@ -1,6 +1,11 @@
 # SPDX-License-Identifier: AGPL-3.0-or-later
 """The reference set: every rack width at every height, plus a printed rack of each width.
 
+10 in and 19 in chassis carry drive bays; the two Modularack widths (14.5 in, whose screwed box takes an
+ATX board, and 15 in, whose tool-less box does) carry the compact ATX layout: the power supply on its edge
+in front of the board with its fan facing out, an intake fan and a power button beside it. A 19 in E-ATX
+server takes the deepest board.
+
 The build exports these and the test suite proves every one of them prints without
 supports, fits the bed and assembles without interference.
 """
@@ -10,12 +15,25 @@ from __future__ import annotations
 from collections.abc import Callable
 from functools import partial
 
-from .cassette import DriveBay, Vent
+from .cassette import DriveBay, Vent, cells_for
 from .chassis import GRID_COLUMNS, MAX_UNITS, MIN_UNITS, EarStyle, RackChassis
 from .component import Component
+from .fans import FanBay
+from .power import PowerButton, PowerSupplyBay, psu_on_edge_fits
 from .rack import PrintedRack
 from .servers import Sacrifice, ServerRails
-from .standards import ATX, DRIVE_2_5, DRIVE_3_5, MINI_ITX, RACK_10_INCH, RACK_19_INCH
+from .standards import (
+    ATX,
+    DRIVE_2_5,
+    DRIVE_3_5,
+    E_ATX,
+    MINI_ITX,
+    RACK_10_INCH,
+    RACK_14_5_INCH,
+    RACK_15_INCH,
+    RACK_19_INCH,
+    RackStandard,
+)
 from .web import PostChannel
 
 DEPTH_10_INCH = 380.0
@@ -26,6 +44,10 @@ RACK_10_INCH_UNITS = 6
 RACK_10_INCH_DEPTH = 300.0
 RACK_19_INCH_UNITS = 12
 RACK_19_INCH_DEPTH = 600.0
+RACK_MID_UNITS = 12
+RACK_MID_DEPTH = 600.0
+"""The 14.5 in and 15 in printed racks: deep enough for the compact ATX chassis."""
+COMPACT_FAN = 120
 COLUMNS_3_5_19_INCH = (0, 4, 8)
 COLUMNS_2_5_19_INCH = (0, 3, 6, 9)
 
@@ -126,6 +148,52 @@ def chassis_19_inch_powered(units: int = 3) -> RackChassis:
     return chassis
 
 
+def chassis_compact_atx(
+    rack: RackStandard,
+    toolless_box: bool,
+    ear_style: EarStyle = EarStyle.SCREW,
+    one_piece: bool = False,
+    toolless_modules: bool = False,
+) -> RackChassis:
+    """4U ATX: the supply on its edge in front of the board, fan facing out, a 120 mm intake fan and a power
+    button beside it, and a 3.5 in bay above the fan. As short as that allows."""
+    chassis = RackChassis(
+        rack,
+        MAX_UNITS,
+        0.0,
+        ATX,
+        ear_style=ear_style,
+        one_piece=one_piece,
+        toolless_box=toolless_box,
+        toolless_modules=toolless_modules,
+        toolless_sleds=toolless_modules,
+    )
+    psu = PowerSupplyBay(rows=MAX_UNITS, on_edge=psu_on_edge_fits(chassis.inner_height))
+    beside = chassis.add_module(psu, 0, 0).columns
+    button = PowerButton()
+    button_columns = cells_for(button, chassis.cell_width)
+    chassis.add_module(button, GRID_COLUMNS - button_columns, MAX_UNITS - 1)
+    chassis.add_module(FanBay(rows=MAX_UNITS - 1, size=COMPACT_FAN), beside, 0, GRID_COLUMNS - beside)
+    chassis.add_module(
+        DriveBay(DRIVE_3_5, pinned=toolless_modules), beside, MAX_UNITS - 1, GRID_COLUMNS - beside - button_columns
+    )
+    chassis.depth = chassis.minimum_depth()
+    chassis.build()
+    return chassis
+
+
+def chassis_19_inch_eatx() -> RackChassis:
+    """4U tool-less E-ATX server: the board at the rear, the supply on its side beside it at the rear wall,
+    80 mm rear fan, and a 3.5 in bay wherever one fits in front, two rows of them; as short as that allows."""
+    chassis = RackChassis(RACK_19_INCH, MAX_UNITS, 0.0, E_ATX, toolless_box=True, power_supply=True, rear_fans=(80,))
+    for row in (0, 2):
+        for column in COLUMNS_3_5_19_INCH:
+            chassis.add_module(DriveBay(DRIVE_3_5), column, row)
+    chassis.depth = chassis.minimum_depth()
+    chassis.build()
+    return chassis
+
+
 def printed_rack_10_inch() -> PrintedRack:
     return PrintedRack(RACK_10_INCH, RACK_10_INCH_UNITS, RACK_10_INCH_DEPTH)
 
@@ -181,6 +249,15 @@ def reference_builders() -> dict[str, Callable[[], Component]]:
     builders["rails_r720_hole"] = partial(ServerRails, sacrifice=Sacrifice.HOLE)
     builders["shelf_19in"] = partial(ServerRails, shelf=True)
     builders["coupons"] = _coupons
+    # The compact ATX layout: screwed at 14.5 in, tool-less at 15 in (fully: drawers, pinned sleds, one-piece
+    # hook corners).
+    builders["chassis_14.5in_4U_atx"] = partial(chassis_compact_atx, RACK_14_5_INCH, False)
+    builders["chassis_15in_4U_atx_toolless"] = partial(
+        chassis_compact_atx, RACK_15_INCH, True, EarStyle.HOOK, True, toolless_modules=True
+    )
+    builders["chassis_19in_4U_eatx"] = chassis_19_inch_eatx
     builders[f"rack_10in_{RACK_10_INCH_UNITS}U"] = printed_rack_10_inch
+    builders[f"rack_14.5in_{RACK_MID_UNITS}U"] = partial(PrintedRack, RACK_14_5_INCH, RACK_MID_UNITS, RACK_MID_DEPTH)
+    builders[f"rack_15in_{RACK_MID_UNITS}U"] = partial(PrintedRack, RACK_15_INCH, RACK_MID_UNITS, RACK_MID_DEPTH)
     builders[f"rack_19in_{RACK_19_INCH_UNITS}U"] = printed_rack_19_inch
     return builders

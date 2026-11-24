@@ -96,7 +96,48 @@ PETG = Material(
 )
 """Prusament PETG technical data sheet v1.1: 47 MPa horizontal tensile yield, 1.5 GPa, 18 +/- 4 MPa interlayer
 adhesion, 1.27 g/cm^3. Poisson's ratio is typical for PETG, not from the sheet."""
-MATERIALS = {"pla": PLA, "petg": PETG}
+ABS = Material(
+    name="Polymaker PolyLite ABS",
+    density=1.04e-3,
+    modulus=2246.6,
+    poisson=0.35,
+    in_layer_strength=33.4,
+    interlayer_strength=29.7,
+)
+"""PolyLite ABS technical data sheet V5.6 (2025-12-30), ISO 527: 2246.6 MPa and 33.4 MPa in X-Y, 29.7 MPa in Z
+(across the layers), 1.04 g/cm^3. Poisson's ratio is typical for ABS, not from the sheet."""
+ASA = Material(
+    name="Prusament ASA",
+    density=1.07e-3,
+    modulus=1600.0,
+    poisson=0.35,
+    in_layer_strength=42.0,
+    interlayer_strength=11.0,
+)
+"""Prusament ASA technical data sheet v1.1 (20-05-2024): 42 MPa horizontal tensile yield, 1.6 GPa, 11 +/- 1 MPa
+interlayer adhesion, 1.07 g/cm^3. Poisson's ratio is typical, not from the sheet."""
+PC = Material(
+    name="Prusament PC Blend",
+    density=1.22e-3,
+    modulus=1900.0,
+    poisson=0.37,
+    in_layer_strength=63.0,
+    interlayer_strength=21.0,
+)
+"""Prusament PC Blend technical data sheet v1.1 (16-02-2022): 63 MPa horizontal tensile yield, 1.9 GPa,
+21 +/- 2 MPa interlayer adhesion, 1.22 g/cm^3. Poisson's ratio is typical for PC, not from the sheet."""
+PA = Material(
+    name="Polymaker PolyMide CoPA (conditioned)",
+    density=1.12e-3,
+    modulus=724.0,
+    poisson=0.40,
+    in_layer_strength=34.3,
+    interlayer_strength=13.7,
+)
+"""PolyMide CoPA (nylon 6/66) technical data sheet V5.5 (2026-01-06), its "wet status" table: 724 MPa and 34.3
+MPa in X-Y, 13.7 MPa in Z, 1.12 g/cm^3. Dry it's 2703 MPa, 78.0 and 45.8 MPa, but printed nylon takes up water
+in service (2.8 % at equilibrium, 70 % RH), so the conditioned values are the ones to design to."""
+MATERIALS = {"pla": PLA, "petg": PETG, "abs": ABS, "asa": ASA, "pc": PC, "pa": PA}
 SAFETY_FACTOR = 2.0
 GRAVITY = 9.81e-3
 """N per g."""
@@ -143,9 +184,9 @@ class EarResult:
         return min(self.in_layer_factor, self.interlayer_factor) >= SAFETY_FACTOR
 
 
-def chassis_mass(chassis: RackChassis) -> float:
-    """Printed parts as solid PLA (an upper bound) plus the payload, in grams."""
-    printed = sum(part.volume for part in chassis.printable_parts().values()) * PLA.density
+def chassis_mass(chassis: RackChassis, material: Material = PLA) -> float:
+    """Printed parts as solid `material` (an upper bound) plus the payload, in grams."""
+    printed = sum(part.volume for part in chassis.printable_parts().values()) * material.density
     payload = 0.0
     for sled in (c for c in chassis.descendants() if isinstance(c, Sled)):
         payload += PAYLOAD.drive_3_5 if sled.geometry.drive is DRIVE_3_5 else PAYLOAD.drive_2_5

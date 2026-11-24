@@ -1,5 +1,5 @@
 # SPDX-License-Identifier: AGPL-3.0-or-later
-"""A 1U-4U rack chassis for 10 in or 19 in racks, built entirely from printed plates.
+"""A 1U-4U rack chassis for 10 in, 14.5 in, 15 in or 19 in racks, built entirely from printed plates.
 
 Structure and load path:
 
@@ -23,7 +23,8 @@ from collections.abc import Callable
 from dataclasses import dataclass, field, replace
 from enum import StrEnum
 
-from build123d import Part, Vector
+from build123d import Box as Cuboid
+from build123d import Compound, Part, Pos, Vector
 
 from . import lid, toolless
 from .braces import KNEE_DEPTH_FRACTION, KneeBrace, socket_for
@@ -54,6 +55,7 @@ from .hooks import (
 from .joints import EDGE_JOINT_END_MARGIN, Hardware, LapFastening, edge_joint, edge_positions, lap_joint
 from .layout import MK3S_BED, Bed, Panel
 from .plate import Boss, BossPocket, Edge, Feature, Frame, Plate, RectCut, Rib, Slot, ThroughHole, feature_extent
+from .power import PowerSupplyBay
 from .print_settings import SOLID
 from .rear import TONGUE_SPACING, RearArm, RearLayout, RearPin, pockets_for
 from .rear import TOP_MARGIN as REAR_TOP_MARGIN
@@ -120,6 +122,8 @@ LAP_MIN_SPACING = 20.0
 LAP_GROOVE_CLEARANCE = 4.5
 """Lap screws sit this far above the top of any sled groove, so their heads never meet a rail."""
 LAP_TOP_CLEARANCE = 5.0
+BOARD_SIDE_CLEARANCE = 1.0
+"""Between a board's edge and a side wall, at the narrowest (`board_floor_width`)."""
 
 
 @dataclass(frozen=True)
@@ -221,6 +225,60 @@ class RackChassis(Component):
 
     def solids(self) -> dict[str, Part]:
         return {}
+
+    def minimum_depth(self) -> float:
+        """The shortest depth that takes the modules placed so far, the board behind them and a rear supply."""
+        deepest = max((p.kind.front_x() + p.kind.depth() for p in self.placements), default=0.0) + SHELF_THICKNESS
+        need = deepest + WALL_THICKNESS
+        if self.motherboard is not None:
+            board = self.motherboard
+            reach = board.depth - board.hole_c_from_corner[1] + HOLE_C_TO_REAR_PANEL + WALL_THICKNESS
+            need = max(need, deepest + BOARD_FRONT_CLEARANCE + reach)
+        if self.power_supply:
+            need = max(need, deepest + ATX_PSU.lengths[1] + WALL_THICKNESS)
+        return float(math.ceil(need))
+
+    def face_fits(self, kind: ModuleKind, column: int, row: int, columns: int) -> bool:
+        """Whether `kind` would fit, by height, the slot at (column, row) spanning `columns`."""
+        return kind.fits(self._slot(Placement(kind, column, row, columns)))
+
+    def bought_parts(self) -> list[Part]:
+        """Stand-ins for the board and power supply (outlines only), to draw beside the printed parts."""
+        parts: list[Part] = []
+        if self.motherboard is not None:
+            board = self.motherboard
+            x1 = self._board_rear_x()
+            y = self._board_shift()
+            z = FLOOR_THICKNESS + STANDOFF_HEIGHT + BOARD_THICKNESS / 2
+            parts.append(Pos(x1 - board.depth / 2, y, z) * Cuboid(board.depth, board.width, BOARD_THICKNESS))
+        spec = ATX_PSU
+        psu = self._psu_layout() if self.power_supply else None
+        if psu is not None:
+            x1 = self.depth - WALL_THICKNESS
+            length = spec.lengths[0]
+            parts.append(
+                Pos(x1 - length / 2, (psu.y0 + psu.y1) / 2, FLOOR_THICKNESS + psu.height / 2)
+                * Cuboid(length, psu.y1 - psu.y0, psu.height)
+            )
+        for child in self.children.values():
+            if isinstance(child, Cassette) and isinstance(child.kind, PowerSupplyBay):
+                kind, slot = child.kind, child.slot
+                length = kind.spec.lengths[0]
+                parts.append(
+                    Pos(child.x_front + length / 2, (slot.y_left + slot.y_right) / 2, slot.z_bottom + kind.tall / 2)
+                    * Cuboid(length, kind.across, kind.tall)
+                )
+        return parts
+
+    def assemble_with_bought_parts(self, explode_distance: float = 0.0) -> Compound:
+        """The assembly plus `bought_parts`, labelled "bought" so a render can tell them apart."""
+        bought = []
+        for k, part in enumerate(self.bought_parts()):
+            part.label = f"bought_{k}"
+            bought.append(part)
+        group = Compound(children=bought)
+        group.label = "bought"
+        return Compound(children=[self.assemble(explode_distance), group])
 
     # Grid -----------------------------------------------------------------------------------
 
@@ -777,7 +835,7 @@ class RackChassis(Component):
         """Where the power supply sits: beside the board, at the left wall, flat if it fits, else on its side."""
         if not self.power_supply:
             return None
-        board = self.motherboard.width if self.motherboard is not None else 0.0
+        board = self.motherboard.width + self._psu_side_gap() - PSU_MARGIN if self.motherboard is not None else 0.0
         free = self.inner_width - board - 2 * PSU_MARGIN - PSU_RIB - PSU_CLEARANCE
         spec = ATX_PSU
         for across, tall, on_side in ((spec.width, spec.height, False), (spec.height, spec.width, True)):
@@ -789,11 +847,34 @@ class RackChassis(Component):
             f"{self.inner_height:.0f} mm of height, against 150 x 86 (flat) or 86 x 150 (on its side)"
         )
 
+    def _psu_side_gap(self) -> float:
+        """With a power supply the board goes to the right wall: this far from it, PSU_MARGIN or more so that
+        its I/O aperture (which runs past its right edge) stays `rear_end_margin` clear of the rear wall's end."""
+        assert self.motherboard is not None
+        overhang = io_reach(self.motherboard) - self.motherboard.width
+        return max(PSU_MARGIN, overhang + rear_end_margin(self.toolless_box))
+
     def _board_shift(self) -> float:
-        """With a power supply, the board moves against the right wall to leave the left side free."""
-        if not self.power_supply or self.motherboard is None:
+        """With a power supply, the board moves against the right wall to leave the left side free.
+
+        Otherwise it's centred, unless its I/O aperture (which runs past the board's right edge) would come
+        closer than `rear_end_margin` to the rear wall's right end; then it moves left as far as needed."""
+        if self.motherboard is None:
             return 0.0
-        return -(self.inner_width / 2 - PSU_MARGIN - self.motherboard.width / 2)
+        board = self.motherboard
+        if self.power_supply:
+            return -(self.inner_width / 2 - board.width / 2 - self._psu_side_gap())
+        room = self.inner_width / 2 + board.width / 2 - io_reach(board)
+        need = rear_end_margin(self.toolless_box)
+        if room >= need:
+            return 0.0
+        limit = self.inner_width / 2 - BOARD_SIDE_CLEARANCE - board.width / 2
+        if need - room > limit + 1e-6:
+            raise ValueError(
+                f"{self.name}: a {board.name} board's I/O aperture needs a box "
+                f"{need - room - max(limit, 0.0):.1f} mm wider (`board_floor_width` gives the narrowest)"
+            )
+        return need - room
 
     def _psu_bay(self) -> None:
         psu = self._psu_layout()
@@ -1306,6 +1387,34 @@ class RackChassis(Component):
         segment.set_print_up(up)
         segment.merge(ear)
         segment.print_settings = SOLID
+
+
+REAR_END_WALL = 2.0
+"""Plastic left in the rear wall between the I/O aperture and the wall's end (or its latch arm's relief)."""
+
+
+def rear_end_margin(toolless_box: bool) -> float:
+    """How far the I/O aperture must stay from the rear wall's end: a tool-less rear wall has its latch arm there."""
+    arm = toolless.REAR_ARM_WIDTH + toolless.REAR_ARM_RELIEF if toolless_box else 0.0
+    return arm + REAR_END_WALL
+
+
+def io_reach(board: MotherboardFormFactor) -> float:
+    """How far the I/O aperture's far edge is from the board's left edge (seen from the front). It runs past
+    the board's right edge: 2.4 mm for the ATX family, whose aperture is wider than the board allows."""
+    return board.hole_c_from_corner[0] + IO_APERTURE_OFFSET_FROM_C + IO_APERTURE_WIDTH
+
+
+def board_floor_width(board: MotherboardFormFactor, toolless_box: bool = False) -> float:
+    """The narrowest floor (`RackChassis.floor_width`) that takes `board` across the box, its I/O at the rear
+    wall: the board against the left wall (less BOARD_SIDE_CLEARANCE), its aperture `rear_end_margin` from the
+    right. A rack width takes the board when its floor is at least this wide; it sets the 14.5 and 15 in widths."""
+    inset = toolless.WALL_INSET if toolless_box else 0.0
+    inner = max(
+        board.width + 2 * BOARD_SIDE_CLEARANCE,
+        BOARD_SIDE_CLEARANCE + io_reach(board) + rear_end_margin(toolless_box),
+    )
+    return inner + 2 * (WALL_THICKNESS + inset)
 
 
 def _blocked_except(

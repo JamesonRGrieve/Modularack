@@ -1,7 +1,7 @@
 # Modularack
 
 A modular rack system you can print on a 250 x 210 mm bed: 1U to 4U chassis for 10 in
-(micro) and 19 in (full-size) racks, hot-swap drive bays, motherboard and power supply mounts,
+(micro), 14.5 in, 15 in and 19 in (full-size) racks, hot-swap drive bays, motherboard and power supply mounts,
 fan grilles, a fully printed rack frame to put them in, and adjustable rails and shelves for
 commercial servers in four-post racks. Every part prints without supports, and every connection
 between parts comes apart again: a screw you can undo, or for square-hole racks a hook or a
@@ -15,7 +15,11 @@ drive dimensions, the SFF-8323 / SFF-8223 drive connector position, and fan scre
 
 ## What you can build
 
-- **Chassis** (`RackChassis`): 10 in or 19 in, 1U to 4U, any depth. The front is a grid of
+- **Rack widths** (`standards.RACK_*`): 10 in and 19 in, plus two of Modularack's own, sized for an ATX
+  board's 12 in rear edge (its I/O cutout runs another 2.4 mm past the board, and the rear wall needs plastic
+  beside it): **14.5 in**, whose screwed box takes ATX, and **15 in**, whose tool-less box does. No rack is
+  sold at those widths; `PrintedRack` prints one.
+- **Chassis** (`RackChassis`): any of those widths, 1U to 4U, any depth. The front is a grid of
   12 columns by one row per U, filled with modules:
   - `DriveBay(drive)`: tool-less hot-swap bays for 3.5 in (`DRIVE_3_5`) and 2.5 in drives
     (`DRIVE_2_5` 15 mm, `DRIVE_2_5_9_5MM`, `DRIVE_2_5_7MM`). Each sled is screwed to the
@@ -32,14 +36,20 @@ drive dimensions, the SFF-8323 / SFF-8223 drive connector position, and fan scre
   - `Vent` and `Blank` faces. Any cells left empty are closed with blanks automatically.
   - Modules can span several rows; each one stands on the floor or the shelf of the module
     below it.
-- **Motherboard**: Mini-ITX, microATX, ATX, SSI CEB or SSI EEB on printed standoff bosses at
+- **Motherboard**: Mini-ITX, microATX, ATX, E-ATX, SSI CEB or SSI EEB on printed standoff bosses at
   the Intel / SSI hole positions (EEB alternates such as F' are added per board with
   `alternate_holes=`), with the rear I/O aperture cut where the spec puts it. The chassis refuses a
-  board that doesn't fit, or one that would collide with the front modules.
+  board that doesn't fit, or one that would collide with the front modules. E-ATX has no published
+  standard: `E_ATX` is the SSI EEB outline (12 x 13 in, the deepest sold as E-ATX) on the ATX holes, which
+  every E-ATX board has; a board using EEB's extended row is `EEB`.
 - **Power supply** (`power_supply=True`): an ATX12V supply of any length up to 220 mm, screwed to the
   rear wall through its four 6-32 holes, around an opening for its fan and inlet. Floor ribs guide
   its body. It lies flat from 3U, or on its side in 4U beside an ATX board; the board moves against the
   far wall to make room. The chassis refuses a supply that would reach the front modules.
+- **Front power supply** (`PowerSupplyBay`, a front module): the supply's fan and inlet face the front,
+  screwed to the bay's face through the same four holes, and its steel case stiffens the front of the box.
+  On its edge (86 mm across, 150 tall, 4U) or flat (150 across, 3U), resting on the floor between side
+  plates that guide any length to 220 mm, with the board behind it. `PowerButton` is a face with a cut-out for a panel-mount switch (16 mm by default).
 - **Fans** (`rear_fans=`, `cover_fans=`): honeycomb grilles with screw holes for 40, 50, 60, 70, 80,
   92, 120, 140 and 200 mm fans, placed clear of seams and every other feature. `standards.FANS` gives
   each screw spacing's source; the 40, 60, 80 and 92 mm spacings are the commonly cited ones, not yet
@@ -111,7 +121,17 @@ drive dimensions, the SFF-8323 / SFF-8223 drive connector position, and fan scre
   their ear holes are slotted for the variation between brands (10 in racks have no formal
   standard).
 
-`src/modularack/reference.py` has a reference design for every width and height.
+`src/modularack/reference.py` has a reference design for every width and height, and the compact ATX
+layout: 4U, the supply on its edge in front of the board, a 120 mm intake fan and a power button beside it
+(`chassis_14.5in_4U_atx` screwed; `chassis_15in_4U_atx_toolless` fully tool-less), plus a 19 in 4U E-ATX server
+(`chassis_19in_4U_eatx`) and printed racks of every width.
+
+**Every configuration** (`matrix`): rack width x height x board x ear style x
+one-piece corners x support x how tool-less x where the supply goes, filled to its heaviest load (bays wherever
+one fits). Each either builds or is refused with the reason, e.g. "an ATX board's I/O aperture needs a box 4.9 mm
+wider". `uv run python -m modularack.matrix --render --fea` builds, checks and renders all of them and runs
+the strength checks once per structure (on its heaviest fill), into `build/matrix/report.csv` and
+`index.html`. It's hours of CPU: run it on a build runner.
 
 ## How it's built
 
@@ -280,6 +300,31 @@ to 88 kg.
 The analysis drove two design changes: the ears are 9 mm thick (at 6 mm the 19 in 1U ear
 reached 14.7 MPa interlayer shear around its top screw, x1.2), and wall seams are staggered
 against floor and cover seams so no seam cuts the whole box.
+
+### Materials and temperature
+
+`uv run python -m modularack.thermal` runs every chassis's checks (ears, walls, struts, tool-less joints) once in PLA
+and scales them to PLA, PETG, ABS, ASA, PC and nylon at ambient temperatures from 20 to 120 degrees C in 5 degree
+steps, into `build/thermal/thermal.md` and `.csv`. Linear analysis of a one-material part means a stress field
+depends only on the load, so each material changes two things: its printed parts' weight (density), and its
+allowable (data-sheet strength in and across the layers, times its retention at that temperature).
+
+| Material | Source (room temperature) | In the layers | Across | Density | Strength gone at |
+|---|---|---|---|---|---|
+| PLA | Prusament PLA TDS v1.1 | 51 MPa | 17 MPa | 1.24 | 59.1 C (DMA E' onset of Tg) |
+| PETG | Prusament PETG TDS v1.1 | 47 | 18 | 1.27 | 68 C (HDT at 1.80 MPa) |
+| ABS | PolyLite ABS TDS V5.6 | 33.4 | 29.7 | 1.04 | 98 C (HDT) |
+| ASA | Prusament ASA TDS v1.1 | 42 | 11 | 1.07 | 86 C (HDT) |
+| PC | Prusament PC Blend TDS v1.1 | 63 | 21 | 1.22 | 93 C (HDT) |
+| Nylon | PolyMide CoPA TDS V5.5, conditioned | 34.3 | 13.7 | 1.12 | 44.4 C (DMA E' onset) |
+
+Retention is a conservative straight-line model, not a measured curve: from the data sheet's value at 23 C,
+down to the storage modulus ratio a DMA study measured at 40 C (Polymers 2024, 16(21), 3018: PLA 0.92, PETG 0.80,
+ABS 0.85, ASA 0.81, nylon 0.81; PC has no DMA found, so its line runs straight from 23 C), and on to nothing at
+the lower of the glass transition's onset and the heat deflection temperature. Real curves stay flatter until
+near Tg, so the middle of the range is under-rated. These are short-term factors: a loaded part near its
+softening point also creeps, so in PLA set a thermal alarm well under the first temperature its design falls
+below x2 (the report gives that step for every design and material).
 
 ### As printed
 

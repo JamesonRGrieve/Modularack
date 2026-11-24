@@ -96,6 +96,10 @@ class ModuleKind(ABC):
         """Height above a row's bottom that the side plates' inner faces are cut up to (0 = uncut)."""
         return 0.0
 
+    def fits(self, slot: CassetteSlot) -> bool:
+        """Whether what this module holds fits a slot of this height (its width is `min_width`)."""
+        return True
+
     def build(self, cassette: Cassette) -> Hardware:
         return Hardware([])
 
@@ -105,6 +109,10 @@ class Cassette(Component):
         super().__init__(name)
         if slot.width < kind.min_width() - 1e-6:
             raise ValueError(f"{name}: {slot.width:.1f} mm slot is narrower than the {kind.min_width():.1f} it needs")
+        if not kind.fits(slot):
+            raise ValueError(
+                f"{name}: a {type(kind).__name__} doesn't fit a {slot.face_top - slot.face_bottom:.1f} mm face"
+            )
         self.kind = kind
         self.slot = slot
         x0, length, height = kind.front_x(), kind.depth(), slot.z_top - slot.z_bottom
@@ -225,15 +233,18 @@ class DriveBay(ModuleKind):
 
     def min_width(self) -> float:
         rail_in_groove = GROOVE_DEPTH - SLED_SIDE_CLEARANCE
-        sled = self.drive.width + 2 * 0.5 + 2 * RAIL_MIN_WIDTH
+        rail = RAIL_MIN_WIDTH
+        if self.pinned:
+            rail = max(rail, self._nominal(pinned=True).pinned_rail_width())
+        sled = self.drive.width + 2 * 0.5 + 2 * rail
         return sled - 2 * rail_in_groove + 2 * SIDE_THICKNESS
 
     def front_x(self) -> float:
         return 0.0
 
-    def _nominal(self) -> SledGeometry:
+    def _nominal(self, pinned: bool = False) -> SledGeometry:
         """Sled heights and length don't depend on the bay's width."""
-        return SledGeometry(self.drive, self.drive.width + 2 * RAIL_MIN_WIDTH + 1)
+        return SledGeometry(self.drive, self.drive.width + 2 * RAIL_MIN_WIDTH + 1, pinned=pinned)
 
     def depth(self) -> float:
         adapter = 0.0 if self.pass_through is None else self.pass_through.body_depth

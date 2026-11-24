@@ -14,7 +14,7 @@ from dataclasses import dataclass
 
 from build123d import Circle, Cylinder, HexLocations, Part, Pos, RegularPolygon, Sketch, Vector, extrude
 
-from .cassette import SIDE_THICKNESS, VENT_MARGIN, Blank
+from .cassette import SIDE_THICKNESS, VENT_MARGIN, Blank, CassetteSlot
 from .component import Component
 from .layout import MK3S_BED, Bed
 from .plate import Feature, Frame, Plate
@@ -83,6 +83,9 @@ class FanBay(Blank):
 
     def min_width(self) -> float:
         return max(self.width, needs(self.size) + 2 * (SIDE_THICKNESS + VENT_MARGIN))
+
+    def fits(self, slot: CassetteSlot) -> bool:
+        return fan(self.size).frame + 2 * FACE_MARGIN <= slot.face_top - slot.face_bottom
 
     def decorate(self, face: Plate) -> None:
         # The fan sits behind the face, so the face need only cover its frame with FACE_MARGIN to spare.

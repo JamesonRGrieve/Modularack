@@ -27,6 +27,8 @@ const TITLE_HEIGHT = 34;
 const LABEL_HEIGHT = 22;
 const EDGE_THRESHOLD_DEGREES = 25;
 const BODY_COLOUR = 0x9cbcd2;
+const BOUGHT_COLOUR = 0xd9a441;
+// Bought parts (board, power supply) are drawn as outlines in their own colour: anything under a node named "bought".
 const EDGE_COLOUR = 0x1d2b36;
 const MARGIN = 1.08;
 
@@ -57,11 +59,14 @@ model.rotation.x = Math.PI / 2; // glTF is Y-up; build123d exports Z-up geometry
 // Double-sided: OCCT tessellation mixes triangle winding, so one-sided faces vanish at random.
 const material = new THREE.MeshStandardMaterial({ color: BODY_COLOUR, roughness: 0.65, metalness: 0.05, side: THREE.DoubleSide,
                                                   polygonOffset: true, polygonOffsetFactor: 1, polygonOffsetUnits: 1 });
+const boughtMaterial = new THREE.MeshStandardMaterial({ color: BOUGHT_COLOUR, roughness: 0.8, metalness: 0.0, side: THREE.DoubleSide,
+                                                        polygonOffset: true, polygonOffsetFactor: 1, polygonOffsetUnits: 1 });
 const edgeMaterial = new THREE.LineBasicMaterial({ color: EDGE_COLOUR });
 const meshes = [];
 model.traverse((node) => { if (node.isMesh) meshes.push(node); });
+const isBought = (node) => { for (let n = node; n; n = n.parent) if (/^bought/.test(n.name ?? "")) return true; return false; };
 for (const mesh of meshes) {
-  mesh.material = material;
+  mesh.material = isBought(mesh) ? boughtMaterial : material;
   mesh.castShadow = true;
   mesh.receiveShadow = true;
   mesh.geometry.computeVertexNormals();

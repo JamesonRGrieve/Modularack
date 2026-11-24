@@ -44,7 +44,7 @@ def test_a_fan_that_cannot_fit_is_refused_with_the_room_there_is() -> None:
         RackChassis(RACK_19_INCH, 2, DEPTH_19_INCH, ATX, rear_fans=(80,)).build()
     with pytest.raises(ValueError, match="FanPlate"):
         RackChassis(RACK_19_INCH, 4, DEPTH_19_INCH, ATX, cover_fans=(140,)).build()
-    with pytest.raises(ValueError, match="tall face"):
+    with pytest.raises(ValueError, match=r"FanBay doesn.t fit a 43\.7 mm face"):
         chassis = RackChassis(RACK_19_INCH, 1, DEPTH_19_INCH, ATX)
         chassis.add_module(FanBay(size=60), 0, 0)
         chassis.build()

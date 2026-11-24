@@ -161,12 +161,18 @@ class SledGeometry:
                 arms.append((x, inner_y, inward, free))
         return arms
 
+    def pinned_rail_width(self) -> float:
+        """The narrowest rail that takes a pin arm (and the detent arm, where they overlap along the rail)."""
+        need = PIN_ARM_SKIN + PIN_ARM_GAP + RAIL_CORE_MIN
+        start = self.detent_arm_start
+        if any(start < hi and lo < start + DETENT_ARM_LENGTH for lo, hi in self.pin_arm_spans()):
+            need += DETENT_ARM_THICKNESS + DETENT_GAP
+        return need
+
     def validate(self) -> None:
         if self.pinned:
-            need = PIN_ARM_SKIN + PIN_ARM_GAP + RAIL_CORE_MIN
+            need = self.pinned_rail_width()
             start = self.detent_arm_start
-            if any(start < hi and lo < start + DETENT_ARM_LENGTH for lo, hi in self.pin_arm_spans()):
-                need += DETENT_ARM_THICKNESS + DETENT_GAP
             if start + DETENT_ARM_LENGTH > self.length - 1:
                 raise ValueError(f"{self.drive.name} sled: no room for the detent arm between its pin arms")
             if self.rail_width < need:
