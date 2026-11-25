@@ -245,7 +245,16 @@ In-layer / across-layer factors:
 | Snap | x1.0 / x0.8 | x1.0 / x0.8 | x1.3 / x1.1 | x4.7 / x3.3 | x7.6 / x4.9 |
 
 So in a two-post rack, hook ears want at least a one-piece corner with a brace one unit down,
-and snap ears a brace two units down; screw ears pass on their own. The brace's strut itself
+and snap ears a brace two units down; screw ears pass on their own.
+
+The weak spot of an unbraced square-hole ear is local: the root of each peg and hook, where it leaves
+the ear's rear face, not the ear plate. A plate doubled over the ear's front doesn't reach it. Taking the
+pegs and rigid hooks as separate parts printed lying on their side, seated 4.5-7.5 mm deep in pockets
+(the same FEA solution judged per part, the seat taken as bonded), lifts the 19 in 1U hook ear across
+the layers from x1.23 to x1.53 and the 10 in 1U snap from x1.22 to x1.57. The limit then moves to the
+ear around the joint screws and the spring hook's cut, and a flange round each peg's root doesn't move
+it further. The 19 in 1U snap ear is under x2 even along the layers (x0.96), so no print orientation
+saves it. Lying-down pegs are a margin, not a replacement for the brace. The brace's strut itself
 carries at most 341 N (19 in 4U, anchor one unit down): x21 on strength and x7.8 on buckling.
 The web clamp holds the chassis up 79 mm behind the ears, so it carries 2.9 times the side's share of
 the weight (the ears then hold the front down); its grip (two faces of PLA on painted steel at a

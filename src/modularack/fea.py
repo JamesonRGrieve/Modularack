@@ -460,12 +460,14 @@ class EarProblem:
 def ear_problem(chassis: RackChassis, work: Path, settings: PrintSettings | None = None) -> EarProblem:
     """The left ear of a chassis hung from its front ears: half the weight, half the overturning moment.
 
-    Solid by default; with print `settings` the ear is meshed as its solid shell and sparse core.
+    Solid by default; with print `settings` the ear is meshed as its solid shell and sparse core. On rear
+    supports (a four-post rack) the rear posts take the overturning moment, and the ear carries only the
+    weight (all of its side's half, conservatively).
     """
     ear = chassis.children[f"{chassis.name}_left_ear"]
     assert isinstance(ear, Plate)
     load = chassis_mass(chassis) * GRAVITY / 2
-    moment = load * chassis.depth / 2
+    moment = 0.0 if chassis.rear_support is not None else load * chassis.depth / 2
     slots = [f for f in ear.features if isinstance(f, Slot)]
     joints = [f for f in ear.features if isinstance(f, ThroughHole)]
     bearing_v = FLOOR_THICKNESS + BEARING_HALF_HEIGHT
@@ -473,7 +475,7 @@ def ear_problem(chassis: RackChassis, work: Path, settings: PrintSettings | None
     # above it take tension in proportion to their height over that pivot (like a bolted flange).
     arms = {id(h): h.v - bearing_v for h in joints if h.v > bearing_v}
     second_moment = sum(a * a for a in arms.values())
-    tensions = {key: moment * arm / second_moment for key, arm in arms.items()}
+    tensions = {key: moment * arm / second_moment for key, arm in arms.items() if moment}
     core: frozenset[int] = frozenset()
     if settings is None:
         export_step(ear.body(), work / "part.step")
@@ -960,14 +962,25 @@ def printed_wall_bending(name: str, chassis: RackChassis, settings: PrintSetting
 def ear_as_printed(
     name: str, chassis: RackChassis, material: Material = PLA, layer_modulus_ratio: float = 1.0
 ) -> EarResult:
-    """The ear judged at its own print settings: solid if it is printed solid, else its shell alone."""
+    """The ear judged at its own print settings: solid if it is printed solid, else its shell alone, and
+    with whatever the chassis props it with (a knee brace or web clamp on a one-piece corner, rear supports)."""
     ear = chassis.children[f"{chassis.name}_left_ear"]
     assert isinstance(ear, Plate)
     if ear.merged_into is not None:
-        return analyse_corner(name, chassis, material=material, layer_modulus_ratio=layer_modulus_ratio)
+        brace, strut = corner_support(chassis)
+        return analyse_corner(name, chassis, brace, strut, material=material, layer_modulus_ratio=layer_modulus_ratio)
     if ear.print_settings.infill_density >= 1:
         return analyse_ear(name, chassis, material, layer_modulus_ratio)
     return analyse_printed_ear(name, chassis, ear.print_settings, EMPTY_CORE).shell
+
+
+def corner_support(chassis: RackChassis) -> tuple[Brace, StrutLayout | None]:
+    """What props a chassis's one-piece corners, as the corner FEA models it."""
+    if chassis.knee_brace_units is not None:
+        return Brace.STRUT, StrutLayout(chassis.knee_brace_units, socket_high=False)
+    if chassis.web_clamp is not None:
+        return Brace.WEB, None
+    return Brace.NONE, None
 
 
 def wall_as_printed(name: str, chassis: RackChassis) -> WallResult:

@@ -7,10 +7,10 @@ from build123d import Pos, Vector
 from modularack.braces import KneeBrace, anchor_height
 from modularack.chassis import EarStyle, RackChassis
 from modularack.checks import check
-from modularack.fea import SAFETY_FACTOR, Brace, StrutLayout, analyse_corner, knee_brace_strut
+from modularack.fea import SAFETY_FACTOR, Brace, StrutLayout, analyse_corner, corner_support, knee_brace_strut
 from modularack.hooks import SQUARE_HOLE
 from modularack.printability import overhangs
-from modularack.reference import chassis_10_inch, chassis_19_inch
+from modularack.reference import chassis_10_inch, chassis_19_inch, chassis_19_inch_web_clamped
 from modularack.standards import RACK_19_INCH
 
 
@@ -59,3 +59,10 @@ def test_a_knee_brace_two_units_down_lifts_the_snap_corner_past_twice_its_load()
     result = analyse_corner("19in 1U snap braced", chassis, Brace.STRUT, StrutLayout(2, False))
     assert result.in_layer_factor >= SAFETY_FACTOR
     assert result.interlayer_factor >= SAFETY_FACTOR
+
+
+def test_the_ear_check_props_a_corner_with_what_the_chassis_has() -> None:
+    # The strength sweep judges each design's corner with its own brace, not bare.
+    assert corner_support(chassis_19_inch(1, EarStyle.SNAP, True, 2)) == (Brace.STRUT, StrutLayout(2, False))
+    assert corner_support(chassis_19_inch_web_clamped()) == (Brace.WEB, None)
+    assert corner_support(chassis_19_inch(1, EarStyle.HOOK, True)) == (Brace.NONE, None)
